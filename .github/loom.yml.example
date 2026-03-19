@@ -1,0 +1,23 @@
+# Loom configuration — place as .github/loom.yml in your repo.
+# All fields are optional; defaults are shown.
+
+# GitHub Projects V2 number (required for board operations)
+# project: 5
+
+# Override auto-detected repo (useful for forks)
+# repo: "owner/repo"
+
+branches:
+  base: "dev"           # base branch for feature branches
+  release: "main"       # release branch
+  types:                # allowed branch type prefixes
+    - feat
+    - fix
+    - doc
+    - refactor
+    - issue
+
+statuses:               # project board status column names
+  todo: "Todo"
+  in_progress: "In Progress"
+  done: "Done"
