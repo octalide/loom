@@ -55,6 +55,11 @@ func (c *Client) AuthenticatedUser(ctx context.Context) (string, error) {
 	return c.userName, nil
 }
 
+// Token returns the token used by this client.
+func (c *Client) Token() string {
+	return c.token
+}
+
 // SplitRepo splits "owner/repo" into owner and repo name.
 func SplitRepo(repo string) (owner, name string, err error) {
 	parts := strings.SplitN(repo, "/", 2)

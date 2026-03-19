@@ -2,10 +2,14 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/octalide/loom/internal/detect"
 	"github.com/octalide/loom/internal/git"
+	gh "github.com/octalide/loom/internal/github"
 )
 
 var version = "dev"
@@ -13,9 +17,20 @@ var version = "dev"
 type Server struct {
 	mcp *mcp.Server
 	git *git.Client
+	gh  *gh.Client
 }
 
 func New() (*Server, error) {
+	token, err := gh.ResolveToken()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "loom: warning: %v\n", err)
+	}
+
+	var ghClient *gh.Client
+	if token != "" {
+		ghClient = gh.NewClient(token)
+	}
+
 	s := &Server{
 		mcp: mcp.NewServer(
 			&mcp.Implementation{Name: "loom", Version: version},
@@ -24,6 +39,7 @@ func New() (*Server, error) {
 			},
 		),
 		git: git.New(),
+		gh:  ghClient,
 	}
 
 	s.registerTools()
@@ -34,32 +50,13 @@ func (s *Server) Run(ctx context.Context) error {
 	return s.mcp.Run(ctx, &mcp.StdioTransport{})
 }
 
-type statusInput struct{}
-
-func (s *Server) registerTools() {
-	mcp.AddTool(s.mcp, &mcp.Tool{
-		Name:        "status",
-		Description: "Get current workflow status: branch, uncommitted changes. Auto-detects from git state and .github/loom.yml.",
-	}, s.handleStatus)
+func (s *Server) detect(cwd string) *detect.Context {
+	return detect.Detect(s.git, cwd)
 }
 
-func (s *Server) handleStatus(ctx context.Context, req *mcp.CallToolRequest, in statusInput) (*mcp.CallToolResult, any, error) {
-	cwd := ""
-
-	branch, err := s.git.CurrentBranch(cwd)
-	if err != nil {
-		return errorResult("could not determine current branch: %v", err), nil, nil
+func (s *Server) requireGH() *mcp.CallToolResult {
+	if s.gh == nil {
+		return errorResult("no GitHub token available; set GH_TOKEN, GITHUB_TOKEN, or run 'gh auth login'")
 	}
-
-	b := newBuilder()
-	b.Header("Status")
-	b.KV("Branch", branch)
-
-	if s.git.HasUncommittedChanges(cwd) {
-		b.Warn("Uncommitted changes")
-	} else {
-		b.OK("Working tree clean")
-	}
-
-	return builderResult(b), nil, nil
+	return nil
 }

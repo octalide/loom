@@ -29,7 +29,7 @@ func ResolveToken() (string, error) {
 }
 
 // CheckAuth verifies the token works and checks for project scope.
-func CheckAuth(token string) (hasProjectScope bool, err error) {
+func (c *Client) CheckAuth(token string) (hasProjectScope bool, err error) {
 	out, err := exec.Command("gh", "auth", "status").CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("not authenticated: %s", strings.TrimSpace(string(out)))
