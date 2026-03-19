@@ -101,9 +101,11 @@ func (c *Client) SetBranchProtection(ctx context.Context, repo, branch string, s
 		for i, check := range statusChecks {
 			checks[i] = &gh.RequiredStatusCheck{Context: check}
 		}
+		emptyContexts := []string{}
 		req.RequiredStatusChecks = &gh.RequiredStatusChecks{
-			Strict: branch == "dev",
-			Checks: &checks,
+			Strict:   branch == "dev",
+			Checks:   &checks,
+			Contexts: &emptyContexts,
 		}
 	}
 
