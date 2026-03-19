@@ -47,7 +47,7 @@ type createIssueInput struct {
 	Title   string `json:"title" jsonschema:"Issue title"`
 	Body    string `json:"body" jsonschema:"Issue body (markdown)"`
 	Repo    string `json:"repo,omitempty" jsonschema:"Repository in owner/repo format. Auto-detected if omitted."`
-	Project int    `json:"project,omitempty" jsonschema:"GitHub Project number. Auto-detected from .github/loom.yml if omitted."`
+	Project string `json:"project,omitempty" jsonschema:"GitHub Project number. Auto-detected from .github/loom.yml if omitted."`
 	Labels  string `json:"labels,omitempty" jsonschema:"Comma-separated label names to apply"`
 }
 
@@ -61,7 +61,7 @@ func (s *Server) handleCreateIssue(ctx context.Context, req *mcp.CallToolRequest
 	if repo == "" {
 		return errorResult("could not detect repo; pass explicitly"), nil, nil
 	}
-	project := detect.FirstNonZero(in.Project, dc.Project)
+	project := detect.FirstNonZero(parseInt(in.Project), dc.Project)
 
 	b := newBuilder()
 
@@ -86,8 +86,8 @@ func (s *Server) handleCreateIssue(ctx context.Context, req *mcp.CallToolRequest
 	}
 
 	// Add to project board
-	if project > 0 {
-		owner := dc.Owner
+	if project != 0 {
+		owner := detect.FirstNonEmpty(dc.Owner, detect.OwnerOf(repo))
 		issueURL, _ := s.gh.GetIssueURL(ctx, repo, number)
 		itemID, err := s.gh.AddIssueToProject(ctx, owner, project, issueURL)
 		if err != nil {
@@ -109,9 +109,9 @@ func (s *Server) handleCreateIssue(ctx context.Context, req *mcp.CallToolRequest
 }
 
 type startInput struct {
-	Issue      int    `json:"issue" jsonschema:"Issue number to start working on"`
+	Issue      string `json:"issue" jsonschema:"Issue number to start working on"`
 	Repo       string `json:"repo,omitempty" jsonschema:"Repository in owner/repo format. Auto-detected if omitted."`
-	Project    int    `json:"project,omitempty" jsonschema:"GitHub Project number. Auto-detected if omitted."`
+	Project    string `json:"project,omitempty" jsonschema:"GitHub Project number. Auto-detected if omitted."`
 	BranchType string `json:"branch_type,omitempty" jsonschema:"Branch prefix: feat fix doc refactor issue. Default: feat"`
 	Worktree   bool   `json:"worktree,omitempty" jsonschema:"Create a worktree instead of switching branches"`
 	Cwd        string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
@@ -127,7 +127,8 @@ func (s *Server) handleStart(ctx context.Context, req *mcp.CallToolRequest, in s
 	if repo == "" {
 		return errorResult("could not detect repo; pass explicitly"), nil, nil
 	}
-	project := detect.FirstNonZero(in.Project, dc.Project)
+	project := detect.FirstNonZero(parseInt(in.Project), dc.Project)
+	issue := parseInt(in.Issue)
 	cfg := dc.Config
 
 	branchType := in.BranchType
@@ -143,14 +144,14 @@ func (s *Server) handleStart(ctx context.Context, req *mcp.CallToolRequest, in s
 	}
 
 	// Fetch issue details
-	issue, err := s.gh.GetIssue(ctx, repo, in.Issue)
+	ghIssue, err := s.gh.GetIssue(ctx, repo, issue)
 	if err != nil {
-		return errorResult("could not fetch issue #%d: %v", in.Issue, err), nil, nil
+		return errorResult("could not fetch issue #%d: %v", issue, err), nil, nil
 	}
 
-	branchName := fmt.Sprintf("%s/%d", branchType, in.Issue)
+	branchName := fmt.Sprintf("%s/%d", branchType, issue)
 	b := newBuilder()
-	b.Header(fmt.Sprintf("Issue #%d: %s", in.Issue, issue.Title))
+	b.Header(fmt.Sprintf("Issue #%d: %s", issue, ghIssue.Title))
 
 	var workCwd string
 	branchExisted := false
@@ -214,9 +215,10 @@ func (s *Server) handleStart(ctx context.Context, req *mcp.CallToolRequest, in s
 	}
 
 	// Set project status to In Progress
-	if project > 0 && issue.URL != "" {
+	if project != 0 && ghIssue.URL != "" {
+		owner := detect.FirstNonEmpty(dc.Owner, detect.OwnerOf(repo))
 		status := cfg.Statuses.InProgress
-		if err := s.gh.SetProjectStatus(ctx, dc.Owner, project, issue.URL, status, ""); err != nil {
+		if err := s.gh.SetProjectStatus(ctx, owner, project, ghIssue.URL, status, ""); err != nil {
 			b.Warn("failed to set status to %s: %v", status, err)
 		} else {
 			b.OK("Status → %s", status)
@@ -304,9 +306,9 @@ func (s *Server) handleCommit(ctx context.Context, req *mcp.CallToolRequest, in 
 }
 
 type finishInput struct {
-	Issue   int    `json:"issue,omitempty" jsonschema:"Issue number. Auto-detected from branch name if omitted."`
+	Issue   string `json:"issue,omitempty" jsonschema:"Issue number. Auto-detected from branch name if omitted."`
 	Repo    string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
-	Project int    `json:"project,omitempty" jsonschema:"Project number. Auto-detected if omitted."`
+	Project string `json:"project,omitempty" jsonschema:"Project number. Auto-detected if omitted."`
 	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
@@ -321,7 +323,7 @@ func (s *Server) handleFinish(ctx context.Context, req *mcp.CallToolRequest, in 
 		return errorResult("could not detect repo; pass explicitly"), nil, nil
 	}
 
-	issueNumber := detect.FirstNonZero(in.Issue, dc.IssueNumber)
+	issueNumber := detect.FirstNonZero(parseInt(in.Issue), dc.IssueNumber)
 	if issueNumber == 0 {
 		return errorResult("could not detect issue number from branch %q; pass explicitly", dc.BranchName), nil, nil
 	}

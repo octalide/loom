@@ -98,6 +98,14 @@ func parseRepoFromRemote(url string) string {
 	return ""
 }
 
+// OwnerOf extracts the owner from an "owner/repo" string.
+func OwnerOf(repo string) string {
+	if idx := strings.Index(repo, "/"); idx > 0 {
+		return repo[:idx]
+	}
+	return ""
+}
+
 // FirstNonEmpty returns the first non-empty string.
 func FirstNonEmpty(values ...string) string {
 	for _, v := range values {
