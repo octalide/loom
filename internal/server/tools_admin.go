@@ -12,11 +12,12 @@ import (
 )
 
 type linkInput struct {
-	Issue        int    `json:"issue" jsonschema:"Source issue number"`
-	Target       int    `json:"target" jsonschema:"Target issue number"`
+	Issue        string `json:"issue" jsonschema:"Source issue number"`
+	Target       string `json:"target" jsonschema:"Target issue number"`
 	Relationship string `json:"relationship" jsonschema:"Relationship type: blocked_by blocks parent_of child_of. Prefix with - to remove."`
 	TargetRepo   string `json:"target_repo,omitempty" jsonschema:"Target repo if different from source. Defaults to same repo."`
 	Repo         string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd          string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleLink(ctx context.Context, req *mcp.CallToolRequest, in linkInput) (*mcp.CallToolResult, any, error) {
@@ -24,12 +25,15 @@ func (s *Server) handleLink(ctx context.Context, req *mcp.CallToolRequest, in li
 		return r, nil, nil
 	}
 
-	dc := s.detect("")
+	dc := s.detect(in.Cwd)
 	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
 	if repo == "" {
 		return errorResult("could not detect repo; pass explicitly"), nil, nil
 	}
 	targetRepo := detect.FirstNonEmpty(in.TargetRepo, repo)
+
+	issueNum := parseInt(in.Issue)
+	targetNum := parseInt(in.Target)
 
 	relationship := in.Relationship
 	remove := strings.HasPrefix(relationship, "-")
@@ -45,15 +49,15 @@ func (s *Server) handleLink(ctx context.Context, req *mcp.CallToolRequest, in li
 	var err error
 	if relationship == "blocked_by" || relationship == "blocks" {
 		if remove {
-			err = s.gh.RemoveBlockingLink(ctx, repo, in.Issue, targetRepo, in.Target, relationship)
+			err = s.gh.RemoveBlockingLink(ctx, repo, issueNum, targetRepo, targetNum, relationship)
 		} else {
-			err = s.gh.AddBlockingLink(ctx, repo, in.Issue, targetRepo, in.Target, relationship)
+			err = s.gh.AddBlockingLink(ctx, repo, issueNum, targetRepo, targetNum, relationship)
 		}
 	} else {
 		if remove {
-			err = s.gh.RemoveSubIssueLink(ctx, repo, in.Issue, targetRepo, in.Target, relationship)
+			err = s.gh.RemoveSubIssueLink(ctx, repo, issueNum, targetRepo, targetNum, relationship)
 		} else {
-			err = s.gh.AddSubIssueLink(ctx, repo, in.Issue, targetRepo, in.Target, relationship)
+			err = s.gh.AddSubIssueLink(ctx, repo, issueNum, targetRepo, targetNum, relationship)
 		}
 	}
 
@@ -75,15 +79,16 @@ func (s *Server) handleLink(ctx context.Context, req *mcp.CallToolRequest, in li
 	}
 
 	b := newBuilder()
-	b.OK("%s %s: #%d → #%d%s", action, relationship, in.Issue, in.Target, cross)
+	b.OK("%s %s: #%d → #%d%s", action, relationship, issueNum, targetNum, cross)
 	return builderResult(b), nil, nil
 }
 
 type boardStatusInput struct {
-	Issue   int    `json:"issue" jsonschema:"Issue number"`
+	Issue   string `json:"issue" jsonschema:"Issue number"`
 	Status  string `json:"status" jsonschema:"Target status: Todo or In Progress or Done"`
 	Repo    string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
-	Project int    `json:"project,omitempty" jsonschema:"Project number. Auto-detected if omitted."`
+	Project string `json:"project,omitempty" jsonschema:"Project number. Auto-detected if omitted."`
+	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleBoardStatus(ctx context.Context, req *mcp.CallToolRequest, in boardStatusInput) (*mcp.CallToolResult, any, error) {
@@ -91,15 +96,17 @@ func (s *Server) handleBoardStatus(ctx context.Context, req *mcp.CallToolRequest
 		return r, nil, nil
 	}
 
-	dc := s.detect("")
+	dc := s.detect(in.Cwd)
 	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
 	if repo == "" {
 		return errorResult("could not detect repo; pass explicitly"), nil, nil
 	}
-	project := detect.FirstNonZero(in.Project, dc.Project)
+	project := detect.FirstNonZero(parseInt(in.Project), dc.Project)
 	if project == 0 {
 		return errorResult("could not detect project number; pass explicitly or add to .github/loom.yml"), nil, nil
 	}
+
+	issueNum := parseInt(in.Issue)
 
 	cfg := dc.Config
 	validStatuses := []string{cfg.Statuses.Todo, cfg.Statuses.InProgress, cfg.Statuses.Done}
@@ -114,20 +121,22 @@ func (s *Server) handleBoardStatus(ctx context.Context, req *mcp.CallToolRequest
 		return errorResult("status must be one of %s; got %q", strings.Join(validStatuses, ", "), in.Status), nil, nil
 	}
 
-	issueURL, err := s.gh.GetIssueURL(ctx, repo, in.Issue)
+	owner := detect.FirstNonEmpty(dc.Owner, detect.OwnerOf(repo))
+
+	issueURL, err := s.gh.GetIssueURL(ctx, repo, issueNum)
 	if err != nil {
-		return errorResult("could not find issue #%d: %v", in.Issue, err), nil, nil
+		return errorResult("could not find issue #%d: %v", issueNum, err), nil, nil
 	}
 
-	if err := s.gh.SetProjectStatus(ctx, dc.Owner, project, issueURL, in.Status, ""); err != nil {
+	if err := s.gh.SetProjectStatus(ctx, owner, project, issueURL, in.Status, ""); err != nil {
 		return errorResult("failed to set status: %v", err), nil, nil
 	}
 
 	b := newBuilder()
-	b.OK("Issue #%d → '%s' on project #%d", in.Issue, in.Status, project)
+	b.OK("Issue #%d → '%s' on project #%d", issueNum, in.Status, project)
 
 	if in.Status == cfg.Statuses.Done {
-		if err := s.gh.ArchiveProjectItem(ctx, dc.Owner, project, issueURL); err != nil {
+		if err := s.gh.ArchiveProjectItem(ctx, owner, project, issueURL); err != nil {
 			b.Warn("archive failed: %v", err)
 		} else {
 			b.OK("Archived on project board")
@@ -140,7 +149,8 @@ func (s *Server) handleBoardStatus(ctx context.Context, req *mcp.CallToolRequest
 type auditInput struct {
 	Fix     bool   `json:"fix,omitempty" jsonschema:"Auto-fix safe issues. Default: false"`
 	Repo    string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
-	Project int    `json:"project,omitempty" jsonschema:"Project number. Auto-detected if omitted."`
+	Project string `json:"project,omitempty" jsonschema:"Project number. Auto-detected if omitted."`
+	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in auditInput) (*mcp.CallToolResult, any, error) {
@@ -148,12 +158,12 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 		return r, nil, nil
 	}
 
-	dc := s.detect("")
+	dc := s.detect(in.Cwd)
 	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
 	if repo == "" {
 		return errorResult("could not detect repo; pass explicitly"), nil, nil
 	}
-	project := detect.FirstNonZero(in.Project, dc.Project)
+	project := detect.FirstNonZero(parseInt(in.Project), dc.Project)
 	cfg := dc.Config
 
 	b := newBuilder()
@@ -361,6 +371,7 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 type setupInput struct {
 	Repo         string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
 	StatusChecks string `json:"status_checks,omitempty" jsonschema:"Comma-separated CI check names to require"`
+	Cwd          string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleSetup(ctx context.Context, req *mcp.CallToolRequest, in setupInput) (*mcp.CallToolResult, any, error) {
@@ -368,7 +379,7 @@ func (s *Server) handleSetup(ctx context.Context, req *mcp.CallToolRequest, in s
 		return r, nil, nil
 	}
 
-	dc := s.detect("")
+	dc := s.detect(in.Cwd)
 	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
 	if repo == "" {
 		return errorResult("could not detect repo; pass explicitly"), nil, nil

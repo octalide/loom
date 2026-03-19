@@ -14,13 +14,14 @@ import (
 
 type statusInput struct {
 	Repo    string `json:"repo,omitempty" jsonschema:"Repository in owner/repo format. Auto-detected if omitted."`
-	Project int    `json:"project,omitempty" jsonschema:"GitHub Project number. Auto-detected if omitted."`
+	Project string `json:"project,omitempty" jsonschema:"GitHub Project number. Auto-detected if omitted."`
+	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleStatus(ctx context.Context, req *mcp.CallToolRequest, in statusInput) (*mcp.CallToolResult, any, error) {
-	dc := s.detect("")
+	dc := s.detect(in.Cwd)
 	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
-	cfg := dc.Config
+	owner := detect.FirstNonEmpty(dc.Owner, detect.OwnerOf(repo))
 
 	b := newBuilder()
 	b.Header(fmt.Sprintf("Status: %s", detect.FirstNonEmpty(repo, "(unknown repo)")))
@@ -45,9 +46,9 @@ func (s *Server) handleStatus(ctx context.Context, req *mcp.CallToolRequest, in 
 			}
 		}
 
-		project := detect.FirstNonZero(in.Project, dc.Project)
-		if project > 0 {
-			items, err := s.gh.GetProjectItems(ctx, dc.Owner, project)
+		project := detect.FirstNonZero(parseInt(in.Project), dc.Project)
+		if project != 0 {
+			items, err := s.gh.GetProjectItems(ctx, owner, project)
 			if err == nil {
 				b.Section(fmt.Sprintf("Project #%d", project))
 				for status, entries := range items {
@@ -66,14 +67,14 @@ func (s *Server) handleStatus(ctx context.Context, req *mcp.CallToolRequest, in 
 		}
 	}
 
-	_ = cfg
 	return builderResult(b), nil, nil
 }
 
 type contextInput struct {
-	Issue   int    `json:"issue" jsonschema:"Issue number"`
+	Issue   string `json:"issue" jsonschema:"Issue number"`
 	Repo    string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
-	Project int    `json:"project,omitempty" jsonschema:"Project number. Auto-detected if omitted."`
+	Project string `json:"project,omitempty" jsonschema:"Project number. Auto-detected if omitted."`
+	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleContext(ctx context.Context, req *mcp.CallToolRequest, in contextInput) (*mcp.CallToolResult, any, error) {
@@ -81,33 +82,34 @@ func (s *Server) handleContext(ctx context.Context, req *mcp.CallToolRequest, in
 		return r, nil, nil
 	}
 
-	dc := s.detect("")
+	dc := s.detect(in.Cwd)
 	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
 	if repo == "" {
 		return errorResult("could not detect repo; pass explicitly"), nil, nil
 	}
 
-	issue, err := s.gh.GetIssue(ctx, repo, in.Issue)
+	issueNum := parseInt(in.Issue)
+	ghIssue, err := s.gh.GetIssue(ctx, repo, issueNum)
 	if err != nil {
-		return errorResult("failed to fetch issue #%d: %v", in.Issue, err), nil, nil
+		return errorResult("failed to fetch issue #%d: %v", issueNum, err), nil, nil
 	}
 
 	b := newBuilder()
-	b.Header(fmt.Sprintf("Issue #%d: %s", issue.Number, issue.Title))
+	b.Header(fmt.Sprintf("Issue #%d: %s", ghIssue.Number, ghIssue.Title))
 	b.KV("Repo", repo)
-	b.KV("State", issue.State)
-	b.KV("URL", issue.URL)
-	if len(issue.Labels) > 0 {
-		b.KV("Labels", strings.Join(issue.Labels, ", "))
+	b.KV("State", ghIssue.State)
+	b.KV("URL", ghIssue.URL)
+	if len(ghIssue.Labels) > 0 {
+		b.KV("Labels", strings.Join(ghIssue.Labels, ", "))
 	}
-	if len(issue.Assignees) > 0 {
-		b.KV("Assignees", strings.Join(issue.Assignees, ", "))
+	if len(ghIssue.Assignees) > 0 {
+		b.KV("Assignees", strings.Join(ghIssue.Assignees, ", "))
 	}
 
 	b.Section("Description")
-	b.Text(output.CleanBody(issue.Body))
+	b.Text(output.CleanBody(ghIssue.Body))
 
-	comments, err := s.gh.GetIssueComments(ctx, repo, in.Issue)
+	comments, err := s.gh.GetIssueComments(ctx, repo, issueNum)
 	b.Section(fmt.Sprintf("Comments (%d)", len(comments)))
 	if err == nil && len(comments) > 0 {
 		for _, c := range comments {
@@ -118,7 +120,7 @@ func (s *Server) handleContext(ctx context.Context, req *mcp.CallToolRequest, in
 	}
 
 	// Linked PR
-	pr, err := s.gh.FindPRForIssue(ctx, repo, in.Issue)
+	pr, err := s.gh.FindPRForIssue(ctx, repo, issueNum)
 	if err == nil {
 		b.Section("Linked PR")
 		b.KV("PR", fmt.Sprintf("#%d: %s", pr.Number, pr.Title))
@@ -138,7 +140,7 @@ func (s *Server) handleContext(ctx context.Context, req *mcp.CallToolRequest, in
 	}
 
 	// Dependencies
-	deps, err := s.gh.GetDependencies(ctx, repo, in.Issue)
+	deps, err := s.gh.GetDependencies(ctx, repo, issueNum)
 	if err == nil {
 		hasDeps := len(deps.BlockedBy) > 0 || len(deps.Blocking) > 0 || deps.Parent != nil || len(deps.SubIssues) > 0
 		if hasDeps {
@@ -172,9 +174,10 @@ func (s *Server) handleContext(ctx context.Context, req *mcp.CallToolRequest, in
 }
 
 type activityInput struct {
-	Issue int    `json:"issue" jsonschema:"Issue number"`
+	Issue string `json:"issue" jsonschema:"Issue number"`
 	Since string `json:"since,omitempty" jsonschema:"ISO 8601 timestamp to filter activity"`
 	Repo  string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd   string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleActivity(ctx context.Context, req *mcp.CallToolRequest, in activityInput) (*mcp.CallToolResult, any, error) {
@@ -182,19 +185,20 @@ func (s *Server) handleActivity(ctx context.Context, req *mcp.CallToolRequest, i
 		return r, nil, nil
 	}
 
-	dc := s.detect("")
+	dc := s.detect(in.Cwd)
 	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
 	if repo == "" {
 		return errorResult("could not detect repo; pass explicitly"), nil, nil
 	}
 
-	activity, err := s.gh.GetActivity(ctx, repo, in.Issue, in.Since)
+	issueNum := parseInt(in.Issue)
+	activity, err := s.gh.GetActivity(ctx, repo, issueNum, in.Since)
 	if err != nil {
 		return errorResult("failed to fetch activity: %v", err), nil, nil
 	}
 
 	b := newBuilder()
-	title := fmt.Sprintf("Activity: issue #%d (%s)", in.Issue, repo)
+	title := fmt.Sprintf("Activity: issue #%d (%s)", issueNum, repo)
 	if in.Since != "" {
 		title += " since " + in.Since
 	}
@@ -267,8 +271,9 @@ func (s *Server) handleActivity(ctx context.Context, req *mcp.CallToolRequest, i
 }
 
 type prFeedbackInput struct {
-	PR   int    `json:"pr" jsonschema:"PR number"`
+	PR   string `json:"pr" jsonschema:"PR number"`
 	Repo string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd  string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handlePRFeedback(ctx context.Context, req *mcp.CallToolRequest, in prFeedbackInput) (*mcp.CallToolResult, any, error) {
@@ -276,15 +281,16 @@ func (s *Server) handlePRFeedback(ctx context.Context, req *mcp.CallToolRequest,
 		return r, nil, nil
 	}
 
-	dc := s.detect("")
+	dc := s.detect(in.Cwd)
 	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
 	if repo == "" {
 		return errorResult("could not detect repo; pass explicitly"), nil, nil
 	}
 
-	pr, err := s.gh.GetPR(ctx, repo, in.PR)
+	prNum := parseInt(in.PR)
+	pr, err := s.gh.GetPR(ctx, repo, prNum)
 	if err != nil {
-		return errorResult("failed to fetch PR #%d: %v", in.PR, err), nil, nil
+		return errorResult("failed to fetch PR #%d: %v", prNum, err), nil, nil
 	}
 
 	b := newBuilder()
@@ -294,7 +300,7 @@ func (s *Server) handlePRFeedback(ctx context.Context, req *mcp.CallToolRequest,
 	b.KV("Changes", fmt.Sprintf("+%d -%d across %d files", pr.Additions, pr.Deletions, pr.ChangedFiles))
 
 	// Reviews
-	reviews, err := s.gh.GetPRReviews(ctx, repo, in.PR)
+	reviews, err := s.gh.GetPRReviews(ctx, repo, prNum)
 	b.Section(fmt.Sprintf("Reviews (%d)", len(reviews)))
 	if err == nil && len(reviews) > 0 {
 		for _, r := range reviews {
@@ -309,7 +315,7 @@ func (s *Server) handlePRFeedback(ctx context.Context, req *mcp.CallToolRequest,
 	}
 
 	// PR comments
-	prComments, err := s.gh.GetPRComments(ctx, repo, in.PR)
+	prComments, err := s.gh.GetPRComments(ctx, repo, prNum)
 	if err == nil && len(prComments) > 0 {
 		b.Section(fmt.Sprintf("PR Comments (%d)", len(prComments)))
 		for _, c := range prComments {
@@ -318,7 +324,7 @@ func (s *Server) handlePRFeedback(ctx context.Context, req *mcp.CallToolRequest,
 	}
 
 	// Inline review comments
-	byFile, err := s.gh.GetPRReviewComments(ctx, repo, in.PR)
+	byFile, err := s.gh.GetPRReviewComments(ctx, repo, prNum)
 	if err == nil {
 		total := 0
 		for _, cs := range byFile {
@@ -346,7 +352,7 @@ func (s *Server) handlePRFeedback(ctx context.Context, req *mcp.CallToolRequest,
 	}
 
 	// Merge readiness
-	readiness, err := s.gh.AssessMergeReadiness(ctx, repo, in.PR)
+	readiness, err := s.gh.AssessMergeReadiness(ctx, repo, prNum)
 	if err == nil {
 		b.Section("Merge Readiness")
 		for _, line := range readiness.Summary {
@@ -358,8 +364,9 @@ func (s *Server) handlePRFeedback(ctx context.Context, req *mcp.CallToolRequest,
 }
 
 type dependenciesInput struct {
-	Issue int    `json:"issue" jsonschema:"Issue number"`
+	Issue string `json:"issue" jsonschema:"Issue number"`
 	Repo  string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd   string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleDependencies(ctx context.Context, req *mcp.CallToolRequest, in dependenciesInput) (*mcp.CallToolResult, any, error) {
@@ -367,19 +374,20 @@ func (s *Server) handleDependencies(ctx context.Context, req *mcp.CallToolReques
 		return r, nil, nil
 	}
 
-	dc := s.detect("")
+	dc := s.detect(in.Cwd)
 	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
 	if repo == "" {
 		return errorResult("could not detect repo; pass explicitly"), nil, nil
 	}
 
-	deps, err := s.gh.GetDependencies(ctx, repo, in.Issue)
+	issueNum := parseInt(in.Issue)
+	deps, err := s.gh.GetDependencies(ctx, repo, issueNum)
 	if err != nil {
 		return errorResult("failed to fetch dependencies: %v", err), nil, nil
 	}
 
 	b := newBuilder()
-	b.Header(fmt.Sprintf("Dependencies: #%d (%s)", in.Issue, repo))
+	b.Header(fmt.Sprintf("Dependencies: #%d (%s)", issueNum, repo))
 
 	hasAny := false
 

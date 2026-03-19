@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -43,4 +44,9 @@ func infoResult(format string, args ...any) *mcp.CallToolResult {
 			&mcp.TextContent{Text: fmt.Sprintf("[-] "+format, args...)},
 		},
 	}
+}
+
+func parseInt(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
 }
