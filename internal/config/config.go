@@ -12,6 +12,7 @@ type Config struct {
 	Repo     string         `yaml:"repo"`
 	Branches BranchesConfig `yaml:"branches"`
 	Statuses StatusesConfig `yaml:"statuses"`
+	Checks   []string       `yaml:"checks"`
 }
 
 type BranchesConfig struct {
@@ -88,6 +89,9 @@ func merge(dst, src *Config) {
 	}
 	if src.Statuses.Done != "" {
 		dst.Statuses.Done = src.Statuses.Done
+	}
+	if len(src.Checks) > 0 {
+		dst.Checks = src.Checks
 	}
 }
 

@@ -3,6 +3,12 @@ package server
 import "github.com/modelcontextprotocol/go-sdk/mcp"
 
 func (s *Server) registerTools() {
+	// Meta
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "usage",
+		Description: "Get comprehensive documentation: workflow lifecycle, config reference, tool descriptions, conventions. Call this when unsure how to use loom.",
+	}, s.handleUsage)
+
 	// Workflow lifecycle
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "create_project",
@@ -74,7 +80,7 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "setup",
-		Description: "Configure a repo with the standard branch workflow: base + release branches, branch protection, auto-delete, auto-merge.",
+		Description: "Configure a repo with the standard branch workflow: base + release branches, branch protection, auto-delete, auto-merge. CI checks are read from .github/loom.yml.",
 	}, s.handleSetup)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
