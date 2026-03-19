@@ -369,9 +369,8 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 }
 
 type setupInput struct {
-	Repo         string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
-	StatusChecks string `json:"status_checks,omitempty" jsonschema:"Comma-separated CI check names to require"`
-	Cwd          string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+	Repo string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd  string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleSetup(ctx context.Context, req *mcp.CallToolRequest, in setupInput) (*mcp.CallToolResult, any, error) {
@@ -389,10 +388,7 @@ func (s *Server) handleSetup(ctx context.Context, req *mcp.CallToolRequest, in s
 	b := newBuilder()
 	b.Header(fmt.Sprintf("Setup: %s", repo))
 
-	var checks []string
-	if in.StatusChecks != "" {
-		checks = parseCSV(in.StatusChecks)
-	}
+	checks := cfg.Checks
 
 	// Repo settings
 	if err := s.gh.SetRepoSettings(ctx, repo, true, true); err != nil {
@@ -426,8 +422,10 @@ func (s *Server) handleSetup(ctx context.Context, req *mcp.CallToolRequest, in s
 		}
 	}
 
-	b.Text("")
-	b.Text("CI workflows are project-specific. Add .github/workflows/ci.yml to the repo, then re-run setup with status_checks to require them.")
+	if len(checks) == 0 {
+		b.Text("")
+		b.Text("No CI checks configured. Add a 'checks' list to .github/loom.yml to require status checks on PRs.")
+	}
 
 	return builderResult(b), nil, nil
 }

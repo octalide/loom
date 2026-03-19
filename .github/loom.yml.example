@@ -21,3 +21,9 @@ statuses:               # project board status column names
   todo: "Todo"
   in_progress: "In Progress"
   done: "Done"
+
+# CI status checks required for branch protection (used by setup tool)
+# checks:
+#   - "build (linux, amd64)"
+#   - vet
+#   - test
