@@ -16,7 +16,6 @@ type Context struct {
 	IssueNumber  int
 	BranchName   string
 	BranchType   string
-	Project      int
 	Cwd          string
 	IsWorktree   bool
 	MainWorktree string
@@ -56,9 +55,6 @@ func Detect(gitClient *git.Client, cwd string) *Context {
 			ctx.Owner = ctx.Repo[:idx]
 		}
 	}
-
-	// Project from config
-	ctx.Project = ctx.Config.Project
 
 	// Current branch → issue number + type
 	branch, err := gitClient.CurrentBranch(cwd)
