@@ -11,18 +11,13 @@ func (s *Server) registerTools() {
 
 	// Workflow lifecycle
 	mcp.AddTool(s.mcp, &mcp.Tool{
-		Name:        "create_project",
-		Description: "Create a new GitHub Project (V2). Returns project number and URL.",
-	}, s.handleCreateProject)
-
-	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "create_issue",
-		Description: "Create a GitHub issue, add it to a project board, and set status to Todo. Auto-detects repo and project from .github/loom.yml.",
+		Description: "Create a GitHub issue with optional labels. Auto-detects repo.",
 	}, s.handleCreateIssue)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "start",
-		Description: "Start working on an issue: create branch from base, push, set project status to In Progress. Auto-detects repo and project.",
+		Description: "Start working on an issue: create branch from base, push. Auto-detects repo.",
 	}, s.handleStart)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
@@ -38,7 +33,7 @@ func (s *Server) registerTools() {
 	// Observability
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "status",
-		Description: "Get current workflow status: branch, uncommitted changes, open PRs, project board, attention-needed alerts (failing CI, stale PRs, missing close refs). Auto-detects everything.",
+		Description: "Get current workflow status: branch, uncommitted changes, open PRs, attention-needed alerts (failing CI, stale PRs, missing close refs, merge conflicts). Auto-detects everything.",
 	}, s.handleStatus)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
@@ -69,18 +64,13 @@ func (s *Server) registerTools() {
 
 	// Admin
 	mcp.AddTool(s.mcp, &mcp.Tool{
-		Name:        "board_status",
-		Description: `Manually update project board status for an issue. Status must be "Todo", "In Progress", or "Done" (or as configured in .github/loom.yml).`,
-	}, s.handleBoardStatus)
-
-	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "audit",
-		Description: "Audit repo health: infrastructure compliance (auth, settings, protection), PR health (failing CI, stale drafts, missing auto-merge), issue health (unlabeled, idle, no linked PR), workflow integrity (branch naming, missing Closes #N). fix=true auto-fixes safe issues.",
+		Description: "Audit repo health: infrastructure compliance (auth, settings, protection, default branch), PR health (failing CI, stale drafts, missing auto-merge), issue health (unlabeled, idle, no linked PR), workflow integrity (branch naming, missing Closes #N). fix=true auto-fixes safe issues.",
 	}, s.handleAudit)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "setup",
-		Description: "Configure a new repo: branch workflow, protection rules, auto-delete, auto-merge, convention labels. Returns a label inventory and agent instructions — walk the user through removing GitHub defaults, adding project-specific labels, and creating loom.yml. Pass cleanup=true to auto-remove GitHub default labels.",
+		Description: "Configure a new repo: branch workflow, protection rules, auto-delete, auto-merge, default branch, convention labels. Returns a label inventory and agent instructions — walk the user through removing GitHub defaults, adding project-specific labels, and creating loom.yml. Pass cleanup=true to auto-remove GitHub default labels.",
 	}, s.handleSetup)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{

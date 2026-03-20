@@ -18,14 +18,6 @@ type Client struct {
 
 	userOnce sync.Once
 	userName string
-
-	projectCache sync.Map // key: "owner/number" → *projectInfo
-}
-
-type projectInfo struct {
-	ProjectID     string
-	StatusFieldID string
-	Options       map[string]string // status name → option ID
 }
 
 func NewClient(token string) *Client {

@@ -1,11 +1,11 @@
 # Loom configuration — place as .github/loom.yml in your repo.
 # All fields are optional; defaults are shown.
 
-# GitHub Projects V2 number (required for board operations)
-# project: 5
-
 # Override auto-detected repo (useful for forks)
 # repo: "owner/repo"
+
+# Merge strategy: merge, squash, or rebase (default: merge)
+# merge_method: "merge"
 
 branches:
   base: "dev"           # base branch for feature branches
@@ -17,14 +17,8 @@ branches:
     - refactor
     - issue
 
-statuses:               # project board status column names
-  todo: "Todo"
-  in_progress: "In Progress"
-  done: "Done"
-
 # CI status checks required for branch protection (used by setup tool)
 # checks:
 #   - "build (linux, amd64)"
 #   - vet
 #   - test
-# test commit for race condition validation

@@ -1,6 +1,6 @@
 # loom
 
-Opinionated GitHub workflow MCP server. Enforces: issue → branch → PR → auto-merge, with GitHub Projects V2 board tracking.
+Opinionated GitHub workflow MCP server. Enforces: issue → branch → PR → auto-merge.
 
 Built for [Claude Code](https://claude.com/claude-code) and any MCP-compatible client.
 
@@ -28,11 +28,11 @@ claude mcp add --scope user --transport stdio loom -- /path/to/loom
 Optional. Place `.github/loom.yml` in your repo:
 
 ```yaml
-project: 5              # GitHub Projects V2 number
-
 branches:
   base: "dev"           # base branch (default: dev)
   release: "main"       # release branch (default: main)
+
+merge_method: "merge"   # merge, squash, or rebase (default: merge)
 
 checks:                 # CI checks required for branch protection
   - build

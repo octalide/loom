@@ -9,11 +9,9 @@ import (
 )
 
 type Config struct {
-	Project     int            `yaml:"project"`
 	Repo        string         `yaml:"repo"`
 	MergeMethod string         `yaml:"merge_method"`
 	Branches    BranchesConfig `yaml:"branches"`
-	Statuses    StatusesConfig `yaml:"statuses"`
 	Checks      []string       `yaml:"checks"`
 }
 
@@ -23,12 +21,6 @@ type BranchesConfig struct {
 	Types   []string `yaml:"types"`
 }
 
-type StatusesConfig struct {
-	Todo       string `yaml:"todo"`
-	InProgress string `yaml:"in_progress"`
-	Done       string `yaml:"done"`
-}
-
 func Default() *Config {
 	return &Config{
 		MergeMethod: "MERGE",
@@ -36,11 +28,6 @@ func Default() *Config {
 			Base:    "dev",
 			Release: "main",
 			Types:   []string{"feat", "fix", "doc", "refactor", "issue"},
-		},
-		Statuses: StatusesConfig{
-			Todo:       "Todo",
-			InProgress: "In Progress",
-			Done:       "Done",
 		},
 	}
 }
@@ -69,9 +56,6 @@ func Load(gitRoot string) *Config {
 }
 
 func merge(dst, src *Config) {
-	if src.Project != 0 {
-		dst.Project = src.Project
-	}
 	if src.Repo != "" {
 		dst.Repo = src.Repo
 	}
@@ -83,15 +67,6 @@ func merge(dst, src *Config) {
 	}
 	if len(src.Branches.Types) > 0 {
 		dst.Branches.Types = src.Branches.Types
-	}
-	if src.Statuses.Todo != "" {
-		dst.Statuses.Todo = src.Statuses.Todo
-	}
-	if src.Statuses.InProgress != "" {
-		dst.Statuses.InProgress = src.Statuses.InProgress
-	}
-	if src.Statuses.Done != "" {
-		dst.Statuses.Done = src.Statuses.Done
 	}
 	if src.MergeMethod != "" {
 		dst.MergeMethod = normalizeMergeMethod(src.MergeMethod)
