@@ -11,6 +11,7 @@ import (
 type PullRequest struct {
 	Number       int
 	Title        string
+	Body         string
 	URL          string
 	State        string
 	IsDraft      bool
@@ -19,6 +20,8 @@ type PullRequest struct {
 	Additions    int
 	Deletions    int
 	ChangedFiles int
+	CreatedAt    string
+	UpdatedAt    string
 }
 
 type ReviewComment struct {
@@ -270,6 +273,7 @@ func prFromREST(pr *gh.PullRequest) *PullRequest {
 	return &PullRequest{
 		Number:       pr.GetNumber(),
 		Title:        pr.GetTitle(),
+		Body:         pr.GetBody(),
 		URL:          pr.GetHTMLURL(),
 		State:        pr.GetState(),
 		IsDraft:      pr.GetDraft(),
@@ -278,5 +282,7 @@ func prFromREST(pr *gh.PullRequest) *PullRequest {
 		Additions:    pr.GetAdditions(),
 		Deletions:    pr.GetDeletions(),
 		ChangedFiles: pr.GetChangedFiles(),
+		CreatedAt:    pr.GetCreatedAt().Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:    pr.GetUpdatedAt().Format("2006-01-02T15:04:05Z"),
 	}
 }
