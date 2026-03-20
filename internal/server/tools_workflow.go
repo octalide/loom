@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -242,6 +243,7 @@ func (s *Server) handleCommit(ctx context.Context, req *mcp.CallToolRequest, in 
 type finishInput struct {
 	Issue string `json:"issue,omitempty" jsonschema:"Issue number. Auto-detected from branch name if omitted."`
 	Repo  string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Wait  bool   `json:"wait,omitempty" jsonschema:"Wait for CI and merge to complete before returning. Blocks for the full duration of CI. Only use when subsequent work depends on the merge result. Default: false"`
 	Cwd   string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
@@ -385,6 +387,21 @@ func (s *Server) handleFinish(ctx context.Context, req *mcp.CallToolRequest, in 
 		}
 	}
 
+	// Wait for merge if requested and not already merged
+	if in.Wait && !merged {
+		b.Info("Waiting for PR #%d to merge...", pr.Number)
+		waitResult := s.waitForPRMerge(ctx, repo, pr.Number, 90*time.Second)
+		switch waitResult {
+		case "merged":
+			b.OK("PR #%d merged", pr.Number)
+			merged = true
+		case "timeout":
+			b.Warn("Timed out waiting for PR #%d to merge (90s)", pr.Number)
+		default:
+			b.Warn("PR #%d ended in unexpected state: %s", pr.Number, waitResult)
+		}
+	}
+
 	// Cleanup
 	b.Section("Cleanup")
 	if dc.IsWorktree {
@@ -481,4 +498,76 @@ func parseCSV(s string) []string {
 		}
 	}
 	return result
+}
+
+func (s *Server) waitForPRMerge(ctx context.Context, repo string, prNumber int, timeout time.Duration) string {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		pr, err := s.gh.GetPR(ctx, repo, prNumber)
+		if err != nil {
+			time.Sleep(3 * time.Second)
+			continue
+		}
+		if pr.State == "closed" {
+			return "merged"
+		}
+		time.Sleep(3 * time.Second)
+	}
+	return "timeout"
+}
+
+type waitInput struct {
+	PR      string `json:"pr" jsonschema:"PR number to wait for"`
+	Timeout int    `json:"timeout,omitempty" jsonschema:"Timeout in seconds. Default: 90"`
+	Repo    string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+}
+
+func (s *Server) handleWait(ctx context.Context, req *mcp.CallToolRequest, in waitInput) (*mcp.CallToolResult, any, error) {
+	if r := s.requireGH(); r != nil {
+		return r, nil, nil
+	}
+
+	dc := s.detect(in.Cwd)
+	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
+	if repo == "" {
+		return errorResult("could not detect repo; pass explicitly"), nil, nil
+	}
+
+	prNum := parseInt(in.PR)
+	if prNum == 0 {
+		return errorResult("pr is required"), nil, nil
+	}
+
+	timeout := 90
+	if in.Timeout > 0 {
+		timeout = in.Timeout
+	}
+
+	b := newBuilder()
+	b.Header(fmt.Sprintf("Waiting for PR #%d", prNum))
+
+	pr, err := s.gh.GetPR(ctx, repo, prNum)
+	if err != nil {
+		return errorResult("could not fetch PR #%d: %v", prNum, err), nil, nil
+	}
+
+	if pr.State == "closed" {
+		b.OK("PR #%d is already merged", prNum)
+		return builderResult(b), nil, nil
+	}
+
+	b.Info("PR #%d is open — polling every 10s (timeout: %ds)", prNum, timeout)
+
+	result := s.waitForPRMerge(ctx, repo, prNum, time.Duration(timeout)*time.Second)
+	switch result {
+	case "merged":
+		b.OK("PR #%d merged", prNum)
+	case "timeout":
+		b.Warn("Timed out after %ds — PR #%d is still open", timeout, prNum)
+	default:
+		b.Warn("PR #%d ended in unexpected state: %s", prNum, result)
+	}
+
+	return builderResult(b), nil, nil
 }
