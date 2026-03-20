@@ -410,24 +410,48 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 			}
 		}
 
-		// Workflow integrity — branch naming
+		// Workflow integrity — branch naming + orphaned branches
 		remoteBranches, err := s.git.ListRemoteBranches(dc.Cwd)
 		if err == nil {
 			var badBranches []string
-			branchTypePattern := regexp.MustCompile(`^(\w+)/(\d+)`)
+			var orphanedBranches []string
+			branchTypePattern := regexp.MustCompile(`^(\w+)/(\d+)$`)
 			for _, br := range remoteBranches {
 				if br == cfg.Branches.Base || br == cfg.Branches.Release || br == "HEAD" {
 					continue
 				}
-				if !branchTypePattern.MatchString(br) {
+				m := branchTypePattern.FindStringSubmatch(br)
+				if m == nil {
 					badBranches = append(badBranches, br)
+					continue
+				}
+				issueNum, _ := strconv.Atoi(m[2])
+				if issueNum > 0 {
+					issue, err := s.gh.GetIssue(ctx, repo, issueNum)
+					if err == nil && issue.State == "closed" {
+						orphanedBranches = append(orphanedBranches, br)
+						if in.Fix {
+							if err := s.git.DeleteRemoteBranch(dc.Cwd, br); err == nil {
+								fixed = append(fixed, fmt.Sprintf("Deleted orphaned remote branch '%s' (issue #%d closed)", br, issueNum))
+							}
+						}
+					}
 				}
 			}
-			if len(badBranches) > 0 {
+			hasIntegrityIssues := len(badBranches) > 0 || len(orphanedBranches) > 0
+			if hasIntegrityIssues {
 				b.Section("Workflow Integrity")
+			}
+			if len(badBranches) > 0 {
 				b.Warn("Branches not following naming convention (%d):", len(badBranches))
 				for _, br := range badBranches {
 					b.Bullet(fmt.Sprintf("`%s` — expected `{type}/{issue_number}`", br))
+				}
+			}
+			if len(orphanedBranches) > 0 {
+				b.Warn("Orphaned remote branches (%d) — issue closed but branch remains:", len(orphanedBranches))
+				for _, br := range orphanedBranches {
+					b.Bullet(fmt.Sprintf("`%s`", br))
 				}
 			}
 		}
