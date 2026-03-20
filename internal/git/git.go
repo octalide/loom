@@ -231,6 +231,11 @@ func (c *Client) PushTag(cwd, tag string) error {
 	return err
 }
 
+func (c *Client) DeleteRemoteBranch(cwd, branch string) error {
+	_, err := c.run(cwd, "git", "push", "origin", "--delete", branch)
+	return err
+}
+
 func (c *Client) RemoteBranchExists(cwd, branch string) bool {
 	out, err := c.stdout(cwd, "git", "ls-remote", "--heads", "origin", branch)
 	return err == nil && strings.Contains(out, branch)
