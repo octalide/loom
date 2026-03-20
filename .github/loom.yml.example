@@ -27,3 +27,4 @@ statuses:               # project board status column names
 #   - "build (linux, amd64)"
 #   - vet
 #   - test
+# test commit for race condition validation
