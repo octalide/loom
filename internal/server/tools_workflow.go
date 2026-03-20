@@ -339,7 +339,8 @@ func (s *Server) handleFinish(ctx context.Context, req *mcp.CallToolRequest, in 
 			}
 
 		default:
-			if readiness.MergeState == "clean" || readiness.MergeState == "unstable" || readiness.MergeState == "has_hooks" || readiness.MergeState == "" {
+			switch readiness.MergeState {
+			case "clean", "unstable", "has_hooks", "":
 				if err := s.gh.MergePR(ctx, repo, pr.Number, cfg.MergeMethod); err != nil {
 					b.Warn("direct merge failed: %v", err)
 					_, autoErr := s.gh.ReadyAndAutoMerge(ctx, repo, pr.Number, cfg.MergeMethod)
@@ -352,7 +353,30 @@ func (s *Server) handleFinish(ctx context.Context, req *mcp.CallToolRequest, in 
 					b.OK("Merged PR #%d (%s)", pr.Number, strings.ToLower(cfg.MergeMethod))
 					merged = true
 				}
-			} else {
+
+			case "behind":
+				b.Info("PR branch is behind %s — updating", cfg.Branches.Base)
+				if err := s.gh.UpdatePRBranch(ctx, repo, pr.Number); err != nil {
+					b.Warn("failed to update PR branch: %v", err)
+				} else {
+					b.OK("Updated PR branch with latest %s", cfg.Branches.Base)
+					_, autoErr := s.gh.ReadyAndAutoMerge(ctx, repo, pr.Number, cfg.MergeMethod)
+					if autoErr != nil {
+						b.Warn("failed to enable auto-merge after update: %v", autoErr)
+					} else {
+						b.OK("Auto-merge enabled — PR will merge when CI passes on updated branch")
+					}
+				}
+
+			case "blocked":
+				_, autoErr := s.gh.ReadyAndAutoMerge(ctx, repo, pr.Number, cfg.MergeMethod)
+				if autoErr != nil {
+					b.Warn("PR is blocked and auto-merge could not be enabled: %v", autoErr)
+				} else {
+					b.OK("Auto-merge enabled — PR will merge when requirements are met")
+				}
+
+			default:
 				b.Warn("PR is not in a mergeable state: %s", readiness.MergeState)
 				b.Section("Merge Readiness")
 				for _, line := range readiness.Summary {

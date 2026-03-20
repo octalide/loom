@@ -174,6 +174,18 @@ func (c *Client) ReadyAndAutoMerge(ctx context.Context, repo string, number int,
 	return wasDraft, nil
 }
 
+func (c *Client) UpdatePRBranch(ctx context.Context, repo string, number int) error {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return err
+	}
+	_, _, err = c.REST.PullRequests.UpdateBranch(ctx, owner, name, number, nil)
+	if err != nil {
+		return fmt.Errorf("update PR #%d branch: %w", number, err)
+	}
+	return nil
+}
+
 func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMethod string) error {
 	owner, name, err := SplitRepo(repo)
 	if err != nil {
