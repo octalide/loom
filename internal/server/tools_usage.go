@@ -54,6 +54,8 @@ func (s *Server) handleUsage(ctx context.Context, req *mcp.CallToolRequest, in u
 	b.Text("  in_progress: \"In Progress\"")
 	b.Text("  done: \"Done\"")
 	b.Text("")
+	b.Text("merge_method: \"merge\"    # merge strategy: merge, squash, rebase (default: merge)")
+	b.Text("")
 	b.Text("checks:                 # CI status checks required for branch protection")
 	b.Text("  - \"build (linux, amd64)\"")
 	b.Text("  - vet")
@@ -88,7 +90,7 @@ func (s *Server) handleUsage(ctx context.Context, req *mcp.CallToolRequest, in u
 	b.Bullet("Branch naming: `{type}/{issue_number}` (e.g. `feat/42`, `fix/17`)")
 	b.Bullet("Commit messages: `<type>: <short description>` (feat, fix, refactor, doc, test, chore, build, ci, perf)")
 	b.Bullet("PR body: `Closes #N` (auto-closes the issue on merge)")
-	b.Bullet("Merge strategy: squash")
+	b.Bullet("Merge strategy: regular merge by default (configurable via merge_method)")
 	b.Bullet("One issue = one branch = one PR")
 
 	return builderResult(b), nil, nil

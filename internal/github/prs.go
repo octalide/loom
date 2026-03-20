@@ -123,51 +123,54 @@ func (c *Client) ListOpenPRs(ctx context.Context, repo string) ([]*PullRequest, 
 	return result, nil
 }
 
-func (c *Client) ReadyPR(ctx context.Context, repo string, number int) error {
+// ReadyAndAutoMerge marks a PR as ready for review and enables auto-merge
+// in a single flow using GraphQL for both operations to avoid REST→GraphQL
+// race conditions.
+func (c *Client) ReadyAndAutoMerge(ctx context.Context, repo string, number int, mergeMethod string) (readied bool, err error) {
 	owner, name, err := SplitRepo(repo)
 	if err != nil {
-		return err
+		return false, err
 	}
-	// Mark as ready by updating draft to false
-	_, _, err = c.REST.PullRequests.Edit(ctx, owner, name, number, &gh.PullRequest{
-		Draft: gh.Ptr(false),
-	})
-	if err != nil {
-		return fmt.Errorf("mark PR #%d ready: %w", number, err)
-	}
-	return nil
-}
 
-func (c *Client) EnableAutoMerge(ctx context.Context, repo string, number int) error {
-	owner, name, err := SplitRepo(repo)
-	if err != nil {
-		return err
-	}
-	// Use GraphQL for auto-merge since REST doesn't support it directly
 	pr, _, err := c.REST.PullRequests.Get(ctx, owner, name, number)
 	if err != nil {
-		return fmt.Errorf("get PR #%d for auto-merge: %w", number, err)
+		return false, fmt.Errorf("get PR #%d: %w", number, err)
 	}
 
-	var mutation struct {
+	nodeID := pr.GetNodeID()
+	wasDraft := pr.GetDraft()
+
+	if wasDraft {
+		var readyMutation struct {
+			MarkPullRequestReadyForReview struct {
+				ClientMutationID string
+			} `graphql:"markPullRequestReadyForReview(input: $input)"`
+		}
+		type MarkReadyInput struct {
+			PullRequestID string `json:"pullRequestId"`
+		}
+		if err := c.GraphQL.Mutate(ctx, &readyMutation, MarkReadyInput{PullRequestID: nodeID}, nil); err != nil {
+			return false, fmt.Errorf("mark PR #%d ready: %w", number, err)
+		}
+	}
+
+	var mergeMutation struct {
 		EnablePullRequestAutoMerge struct {
 			ClientMutationID string
 		} `graphql:"enablePullRequestAutoMerge(input: $input)"`
 	}
-	input := EnablePullRequestAutoMergeInput{
-		PullRequestID: pr.GetNodeID(),
-		MergeMethod:   "SQUASH",
+	type AutoMergeInput struct {
+		PullRequestID string `json:"pullRequestId"`
+		MergeMethod   string `json:"mergeMethod"`
 	}
-	err = c.GraphQL.Mutate(ctx, &mutation, input, nil)
-	if err != nil {
-		return fmt.Errorf("enable auto-merge for PR #%d: %w", number, err)
+	if err := c.GraphQL.Mutate(ctx, &mergeMutation, AutoMergeInput{
+		PullRequestID: nodeID,
+		MergeMethod:   mergeMethod,
+	}, nil); err != nil {
+		return wasDraft, fmt.Errorf("enable auto-merge for PR #%d: %w", number, err)
 	}
-	return nil
-}
 
-type EnablePullRequestAutoMergeInput struct {
-	PullRequestID string `json:"pullRequestId"`
-	MergeMethod   string `json:"mergeMethod"`
+	return wasDraft, nil
 }
 
 func (c *Client) GetPRReviews(ctx context.Context, repo string, number int) ([]Review, error) {
