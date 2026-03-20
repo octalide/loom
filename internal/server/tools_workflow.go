@@ -243,7 +243,6 @@ func (s *Server) handleCommit(ctx context.Context, req *mcp.CallToolRequest, in 
 type finishInput struct {
 	Issue string `json:"issue,omitempty" jsonschema:"Issue number. Auto-detected from branch name if omitted."`
 	Repo  string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
-	Wait  bool   `json:"wait,omitempty" jsonschema:"Wait for CI and merge to complete before returning. Blocks for the full duration of CI. Only use when subsequent work depends on the merge result. Default: false"`
 	Cwd   string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
@@ -384,21 +383,6 @@ func (s *Server) handleFinish(ctx context.Context, req *mcp.CallToolRequest, in 
 					b.Bullet(line)
 				}
 			}
-		}
-	}
-
-	// Wait for merge if requested and not already merged
-	if in.Wait && !merged {
-		b.Info("Waiting for PR #%d to merge...", pr.Number)
-		waitResult := s.waitForPRMerge(ctx, repo, pr.Number, 90*time.Second)
-		switch waitResult {
-		case "merged":
-			b.OK("PR #%d merged", pr.Number)
-			merged = true
-		case "timeout":
-			b.Warn("Timed out waiting for PR #%d to merge (90s)", pr.Number)
-		default:
-			b.Warn("PR #%d ended in unexpected state: %s", pr.Number, waitResult)
 		}
 	}
 

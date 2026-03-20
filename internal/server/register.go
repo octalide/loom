@@ -27,7 +27,7 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "finish",
-		Description: "Finish an issue: push, ready PR, merge or enable auto-merge, clean up branch/worktree. Auto-detects issue from branch name. Pass wait=true to block until the PR is merged (waits for CI). Only use wait when subsequent work depends on the merge result.",
+		Description: "Finish an issue: push, ready PR, merge or enable auto-merge, clean up branch/worktree. Auto-detects issue from branch name.",
 	}, s.handleFinish)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
