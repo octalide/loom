@@ -369,22 +369,18 @@ func (s *Server) handleFinish(ctx context.Context, req *mcp.CallToolRequest, in 
 		}
 	}
 
-	// Mark PR ready
-	if err := s.gh.ReadyPR(ctx, repo, pr.Number); err != nil {
-		b.Warn("failed to mark PR as ready: %v", err)
+	// Ready PR + enable auto-merge (single GraphQL flow)
+	cfg := dc.Config
+	readied, err := s.gh.ReadyAndAutoMerge(ctx, repo, pr.Number, cfg.MergeMethod)
+	if err != nil {
+		b.Warn("failed to ready/auto-merge: %v", err)
 	} else {
-		if pr.IsDraft {
+		if readied {
 			b.OK("Marked PR as ready")
 		} else {
 			b.OK("PR confirmed ready")
 		}
-	}
-
-	// Enable auto-merge
-	if err := s.gh.EnableAutoMerge(ctx, repo, pr.Number); err != nil {
-		b.Warn("failed to enable auto-merge: %v", err)
-	} else {
-		b.OK("Auto-merge enabled (squash) for PR #%d", pr.Number)
+		b.OK("Auto-merge enabled (%s) for PR #%d", strings.ToLower(cfg.MergeMethod), pr.Number)
 	}
 
 	// Cleanup
