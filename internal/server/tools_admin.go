@@ -392,9 +392,16 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 					issues = append(issues, "no labels")
 				}
 
-				_, prErr := s.gh.FindPRForIssue(ctx, repo, issue.Number)
+				pr, prErr := s.gh.FindPRForIssue(ctx, repo, issue.Number)
 				if prErr != nil && idle.Hours() > 14*24 {
 					issues = append(issues, fmt.Sprintf("no linked PR, idle for %d days", int(idle.Hours()/24)))
+				} else if prErr == nil && pr.State == "closed" {
+					issues = append(issues, fmt.Sprintf("has merged PR #%d but wasn't closed", pr.Number))
+					if in.Fix {
+						if err := s.gh.CloseIssue(ctx, repo, issue.Number); err == nil {
+							fixed = append(fixed, fmt.Sprintf("Closed issue #%d (merged PR #%d)", issue.Number, pr.Number))
+						}
+					}
 				}
 
 				if len(issues) > 0 {
