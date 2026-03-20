@@ -541,8 +541,6 @@ func (s *Server) handleWait(ctx context.Context, req *mcp.CallToolRequest, in wa
 		return builderResult(b), nil, nil
 	}
 
-	b.Info("PR #%d is open — polling every 10s (timeout: %ds)", prNum, timeout)
-
 	result := s.waitForPRMerge(ctx, repo, prNum, time.Duration(timeout)*time.Second)
 	switch result {
 	case "merged":
