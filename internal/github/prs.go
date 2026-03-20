@@ -128,6 +128,31 @@ func (c *Client) ListOpenPRs(ctx context.Context, repo string) ([]*PullRequest, 
 	return result, nil
 }
 
+func (c *Client) ReadyPR(ctx context.Context, repo string, number int) error {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return err
+	}
+	pr, _, err := c.REST.PullRequests.Get(ctx, owner, name, number)
+	if err != nil {
+		return fmt.Errorf("get PR #%d: %w", number, err)
+	}
+	if !pr.GetDraft() {
+		return nil
+	}
+	var mutation struct {
+		MarkPullRequestReadyForReview struct {
+			ClientMutationID string
+		} `graphql:"markPullRequestReadyForReview(input: $input)"`
+	}
+	if err := c.GraphQL.Mutate(ctx, &mutation, githubv4.MarkPullRequestReadyForReviewInput{
+		PullRequestID: githubv4.ID(pr.GetNodeID()),
+	}, nil); err != nil {
+		return fmt.Errorf("mark PR #%d ready: %w", number, err)
+	}
+	return nil
+}
+
 // ReadyAndAutoMerge marks a PR as ready for review and enables auto-merge
 // in a single flow using GraphQL for both operations to avoid REST→GraphQL
 // race conditions.
