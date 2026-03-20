@@ -360,15 +360,6 @@ func (s *Server) handleFinish(ctx context.Context, req *mcp.CallToolRequest, in 
 	}
 	b.OK("Found PR #%d", pr.Number)
 
-	// Merge readiness
-	readiness, err := s.gh.AssessMergeReadiness(ctx, repo, pr.Number)
-	if err == nil {
-		b.Section("Merge Readiness")
-		for _, line := range readiness.Summary {
-			b.Bullet(line)
-		}
-	}
-
 	// Ready PR + enable auto-merge (single GraphQL flow)
 	cfg := dc.Config
 	readied, err := s.gh.ReadyAndAutoMerge(ctx, repo, pr.Number, cfg.MergeMethod)
@@ -381,6 +372,15 @@ func (s *Server) handleFinish(ctx context.Context, req *mcp.CallToolRequest, in 
 			b.OK("PR confirmed ready")
 		}
 		b.OK("Auto-merge enabled (%s) for PR #%d", strings.ToLower(cfg.MergeMethod), pr.Number)
+	}
+
+	// Merge readiness (after mutations so it reflects final state)
+	readiness, err := s.gh.AssessMergeReadiness(ctx, repo, pr.Number)
+	if err == nil {
+		b.Section("Merge Readiness")
+		for _, line := range readiness.Summary {
+			b.Bullet(line)
+		}
 	}
 
 	// Cleanup
