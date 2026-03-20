@@ -140,6 +140,21 @@ func (c *Client) AddLabels(ctx context.Context, repo string, number int, labels 
 	return err
 }
 
+func (c *Client) CloseIssue(ctx context.Context, repo string, number int) error {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return err
+	}
+	state := "closed"
+	_, _, err = c.REST.Issues.Edit(ctx, owner, name, number, &gh.IssueRequest{
+		State: &state,
+	})
+	if err != nil {
+		return fmt.Errorf("close issue #%d: %w", number, err)
+	}
+	return nil
+}
+
 func (c *Client) GetIssueURL(ctx context.Context, repo string, number int) (string, error) {
 	owner, name, err := SplitRepo(repo)
 	if err != nil {
