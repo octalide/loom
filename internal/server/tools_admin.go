@@ -9,6 +9,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/octalide/loom/internal/detect"
+	gh "github.com/octalide/loom/internal/github"
 )
 
 type linkInput struct {
@@ -427,5 +428,89 @@ func (s *Server) handleSetup(ctx context.Context, req *mcp.CallToolRequest, in s
 		b.Text("No CI checks configured. Add a 'checks' list to .github/loom.yml to require status checks on PRs.")
 	}
 
+	// Labels
+	created, err := s.gh.EnsureLabels(ctx, repo, gh.DefaultLabels)
+	if err != nil {
+		b.Warn("Labels failed: %v", err)
+	} else if len(created) > 0 {
+		b.OK("Labels: created %s", strings.Join(created, ", "))
+	} else {
+		b.OK("Labels: all defaults present")
+	}
+
+	b.Section("Next Steps")
+	b.Text("The default workflow labels (feat, fix, refactor, etc.) have been created. Ask the user if they want any project-specific labels added or any existing labels removed. Use the `labels` tool to list, create, or delete labels as needed.")
+
 	return builderResult(b), nil, nil
 }
+
+type labelsInput struct {
+	Action      string `json:"action" jsonschema:"Action: list create or delete"`
+	Name        string `json:"name,omitempty" jsonschema:"Label name (required for create/delete)"`
+	Description string `json:"description,omitempty" jsonschema:"Label description (for create)"`
+	Color       string `json:"color,omitempty" jsonschema:"Hex color without # (for create). Default: 6e7781"`
+	Repo        string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd         string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+}
+
+func (s *Server) handleLabels(ctx context.Context, req *mcp.CallToolRequest, in labelsInput) (*mcp.CallToolResult, any, error) {
+	if r := s.requireGH(); r != nil {
+		return r, nil, nil
+	}
+
+	dc := s.detect(in.Cwd)
+	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
+	if repo == "" {
+		return errorResult("could not detect repo; pass explicitly"), nil, nil
+	}
+
+	b := newBuilder()
+
+	switch in.Action {
+	case "list":
+		labels, err := s.gh.ListLabels(ctx, repo)
+		if err != nil {
+			return errorResult("failed to list labels: %v", err), nil, nil
+		}
+		b.Header(fmt.Sprintf("Labels: %s (%d)", repo, len(labels)))
+		for _, l := range labels {
+			desc := ""
+			if l.Description != "" {
+				desc = fmt.Sprintf(" — %s", l.Description)
+			}
+			b.Bullet(fmt.Sprintf("`%s`%s (#%s)", l.Name, desc, l.Color))
+		}
+		if len(labels) == 0 {
+			b.Text("No labels")
+		}
+
+	case "create":
+		if in.Name == "" {
+			return errorResult("name is required for create"), nil, nil
+		}
+		color := in.Color
+		if color == "" {
+			color = "6e7781"
+		}
+		label := gh.Label{Name: in.Name, Description: in.Description, Color: color}
+		if err := s.gh.CreateLabel(ctx, repo, label); err != nil {
+			return errorResult("failed to create label: %v", err), nil, nil
+		}
+		b.OK("Created label `%s` (#%s)", in.Name, color)
+
+	case "delete":
+		if in.Name == "" {
+			return errorResult("name is required for delete"), nil, nil
+		}
+		if err := s.gh.DeleteLabel(ctx, repo, in.Name); err != nil {
+			return errorResult("failed to delete label: %v", err), nil, nil
+		}
+		b.OK("Deleted label `%s`", in.Name)
+
+	default:
+		return errorResult("action must be list, create, or delete; got %q", in.Action), nil, nil
+	}
+
+	return builderResult(b), nil, nil
+}
+

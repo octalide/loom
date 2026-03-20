@@ -81,7 +81,8 @@ func (s *Server) handleUsage(ctx context.Context, req *mcp.CallToolRequest, in u
 	b.Text("**Admin:**")
 	b.Bullet("`board_status(issue, status)` — manual board status override")
 	b.Bullet("`audit()` — check workflow compliance, fix=true auto-fixes")
-	b.Bullet("`setup()` — configure branch protection, auto-delete, auto-merge (checks from config)")
+	b.Bullet("`setup()` — configure new repo: branches, protection, labels, then guides you through project-specific customization")
+	b.Bullet("`labels(action, name?, description?, color?)` — list, create, or delete repo labels")
 	b.Bullet("`worktrees()` — list worktrees with issue numbers")
 
 	b.Section("Conventions")

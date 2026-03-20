@@ -80,8 +80,13 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "setup",
-		Description: "Configure a repo with the standard branch workflow: base + release branches, branch protection, auto-delete, auto-merge. CI checks are read from .github/loom.yml.",
+		Description: "Configure a new repo: branch workflow, protection rules, auto-delete, auto-merge, default labels. Outputs next steps for the agent to discuss with the user.",
 	}, s.handleSetup)
+
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "labels",
+		Description: "Manage repo labels. Actions: list, create, delete. Use after setup to customize labels for the project.",
+	}, s.handleLabels)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "worktrees",
