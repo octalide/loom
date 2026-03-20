@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -43,6 +45,42 @@ func (s *Server) handleStatus(ctx context.Context, req *mcp.CallToolRequest, in 
 			}
 			for _, pr := range prs {
 				b.Bullet(fmt.Sprintf("#%d [%s] %s", pr.Number, pr.HeadRefName, pr.Title))
+			}
+
+			var alerts []string
+			now := time.Now()
+			branchPattern := regexp.MustCompile(`^(\w+)/(\d+)`)
+			for _, pr := range prs {
+				createdAt, _ := time.Parse("2006-01-02T15:04:05Z", pr.CreatedAt)
+				updatedAt, _ := time.Parse("2006-01-02T15:04:05Z", pr.UpdatedAt)
+				age := now.Sub(createdAt)
+				idle := now.Sub(updatedAt)
+
+				if pr.IsDraft && age.Hours() > 7*24 {
+					alerts = append(alerts, fmt.Sprintf("PR #%d: draft for %d days", pr.Number, int(age.Hours()/24)))
+				} else if !pr.IsDraft && idle.Hours() > 7*24 {
+					alerts = append(alerts, fmt.Sprintf("PR #%d: idle for %d days", pr.Number, int(idle.Hours()/24)))
+				}
+
+				if !containsCloseRef(pr.Body, branchPattern, pr.HeadRefName) {
+					alerts = append(alerts, fmt.Sprintf("PR #%d: missing Closes #N", pr.Number))
+				}
+
+				readiness, err := s.gh.AssessMergeReadiness(ctx, repo, pr.Number)
+				if err == nil {
+					for _, check := range readiness.Checks {
+						if check.Conclusion == "failure" || check.Conclusion == "error" {
+							alerts = append(alerts, fmt.Sprintf("PR #%d: failing CI", pr.Number))
+							break
+						}
+					}
+				}
+			}
+			if len(alerts) > 0 {
+				b.Section("Attention Needed")
+				for _, a := range alerts {
+					b.Warn("%s", a)
+				}
 			}
 		}
 

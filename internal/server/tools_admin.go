@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/octalide/loom/internal/detect"
+	gh "github.com/octalide/loom/internal/github"
 )
 
 type linkInput struct {
@@ -355,6 +358,129 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 		b.OK("No linked worktrees")
 	}
 
+	// PR health
+	if s.gh != nil {
+		openPRs, err := s.gh.ListOpenPRs(ctx, repo)
+		if err == nil && len(openPRs) > 0 {
+			b.Section(fmt.Sprintf("PR Health (%d open)", len(openPRs)))
+			now := time.Now()
+			branchPattern := regexp.MustCompile(`^(\w+)/(\d+)`)
+			for _, pr := range openPRs {
+				var issues []string
+				createdAt, _ := time.Parse("2006-01-02T15:04:05Z", pr.CreatedAt)
+				updatedAt, _ := time.Parse("2006-01-02T15:04:05Z", pr.UpdatedAt)
+				age := now.Sub(createdAt)
+				idle := now.Sub(updatedAt)
+
+				if pr.IsDraft && age.Hours() > 7*24 {
+					issues = append(issues, fmt.Sprintf("draft for %d days", int(age.Hours()/24)))
+				}
+
+				if !pr.IsDraft && idle.Hours() > 7*24 {
+					issues = append(issues, fmt.Sprintf("idle for %d days", int(idle.Hours()/24)))
+				}
+
+				missingCloseRef := !containsCloseRef(pr.Body, branchPattern, pr.HeadRefName)
+				if missingCloseRef {
+					issues = append(issues, "missing Closes #N in body")
+					if in.Fix {
+						if m := branchPattern.FindStringSubmatch(pr.HeadRefName); m != nil {
+							issueNum, _ := strconv.Atoi(m[2])
+							if issueNum > 0 {
+								newBody := pr.Body
+								if newBody != "" {
+									newBody += "\n\n"
+								}
+								newBody += fmt.Sprintf("Closes #%d", issueNum)
+								if err := s.gh.UpdatePRBody(ctx, repo, pr.Number, newBody); err == nil {
+									fixed = append(fixed, fmt.Sprintf("Added 'Closes #%d' to PR #%d body", issueNum, pr.Number))
+								}
+							}
+						}
+					}
+				}
+
+				readiness, err := s.gh.AssessMergeReadiness(ctx, repo, pr.Number)
+				if err == nil {
+					if !pr.IsDraft && !readiness.AutoMerge {
+						issues = append(issues, "auto-merge not enabled")
+						if in.Fix {
+							if err := s.gh.EnableAutoMerge(ctx, repo, pr.Number, cfg.MergeMethod); err == nil {
+								fixed = append(fixed, fmt.Sprintf("Enabled auto-merge on PR #%d", pr.Number))
+							}
+						}
+					}
+					hasFailure := false
+					for _, check := range readiness.Checks {
+						if check.Conclusion == "failure" || check.Conclusion == "error" {
+							hasFailure = true
+							break
+						}
+					}
+					if hasFailure {
+						issues = append(issues, "failing CI")
+					}
+					if readiness.MergeState == "dirty" {
+						issues = append(issues, "merge conflicts")
+					}
+				}
+
+				if len(issues) > 0 {
+					b.Warn("PR #%d (%s): %s", pr.Number, pr.HeadRefName, strings.Join(issues, ", "))
+				} else {
+					b.OK("PR #%d (%s)", pr.Number, pr.HeadRefName)
+				}
+			}
+		}
+
+		// Issue health
+		openIssues, err := s.gh.ListOpenIssues(ctx, repo)
+		if err == nil && len(openIssues) > 0 {
+			b.Section(fmt.Sprintf("Issue Health (%d open)", len(openIssues)))
+			now := time.Now()
+			for _, issue := range openIssues {
+				var issues []string
+				updatedAt, _ := time.Parse("2006-01-02T15:04:05Z", issue.UpdatedAt)
+				idle := now.Sub(updatedAt)
+
+				if len(issue.Labels) == 0 {
+					issues = append(issues, "no labels")
+				}
+
+				_, prErr := s.gh.FindPRForIssue(ctx, repo, issue.Number)
+				if prErr != nil && idle.Hours() > 14*24 {
+					issues = append(issues, fmt.Sprintf("no linked PR, idle for %d days", int(idle.Hours()/24)))
+				}
+
+				if len(issues) > 0 {
+					b.Warn("Issue #%d (%s): %s", issue.Number, issue.Title, strings.Join(issues, ", "))
+				}
+			}
+		}
+
+		// Workflow integrity — branch naming
+		remoteBranches, err := s.git.ListRemoteBranches(dc.Cwd)
+		if err == nil {
+			var badBranches []string
+			branchTypePattern := regexp.MustCompile(`^(\w+)/(\d+)`)
+			for _, br := range remoteBranches {
+				if br == cfg.Branches.Base || br == cfg.Branches.Release || br == "HEAD" {
+					continue
+				}
+				if !branchTypePattern.MatchString(br) {
+					badBranches = append(badBranches, br)
+				}
+			}
+			if len(badBranches) > 0 {
+				b.Section("Workflow Integrity")
+				b.Warn("Branches not following naming convention (%d):", len(badBranches))
+				for _, br := range badBranches {
+					b.Bullet(fmt.Sprintf("`%s` — expected `{type}/{issue_number}`", br))
+				}
+			}
+		}
+	}
+
 	if len(fixed) > 0 {
 		b.Section(fmt.Sprintf("Fixed (%d)", len(fixed)))
 		for _, f := range fixed {
@@ -369,8 +495,9 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 }
 
 type setupInput struct {
-	Repo string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
-	Cwd  string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+	Cleanup bool   `json:"cleanup,omitempty" jsonschema:"Remove GitHub default labels that don't align with conventions. Default: false"`
+	Repo    string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleSetup(ctx context.Context, req *mcp.CallToolRequest, in setupInput) (*mcp.CallToolResult, any, error) {
@@ -427,5 +554,199 @@ func (s *Server) handleSetup(ctx context.Context, req *mcp.CallToolRequest, in s
 		b.Text("No CI checks configured. Add a 'checks' list to .github/loom.yml to require status checks on PRs.")
 	}
 
+	// Labels — ensure convention labels, then build inventory
+	created, err := s.gh.EnsureLabels(ctx, repo, gh.DefaultLabels)
+	if err != nil {
+		b.Warn("Labels failed: %v", err)
+	} else if len(created) > 0 {
+		b.OK("Labels: created %s", strings.Join(created, ", "))
+	} else {
+		b.OK("Labels: all defaults present")
+	}
+
+	allLabels, labelErr := s.gh.ListLabels(ctx, repo)
+
+	conventionNames := make(map[string]bool)
+	for _, l := range gh.DefaultLabels {
+		conventionNames[l.Name] = true
+	}
+	githubDefaultNames := make(map[string]bool)
+	for _, name := range gh.GitHubDefaultLabels {
+		githubDefaultNames[name] = true
+	}
+
+	if labelErr == nil {
+		var githubDefaults, custom []string
+		for _, l := range allLabels {
+			if conventionNames[l.Name] {
+				continue
+			}
+			if githubDefaultNames[l.Name] {
+				githubDefaults = append(githubDefaults, l.Name)
+			} else {
+				custom = append(custom, l.Name)
+			}
+		}
+
+		b.Section("Label Inventory")
+		b.Text("**Convention labels** (loom workflow):")
+		for _, l := range gh.DefaultLabels {
+			b.Bullet(fmt.Sprintf("`%s` — %s", l.Name, l.Description))
+		}
+
+		if len(githubDefaults) > 0 {
+			if in.Cleanup {
+				deleted, delErr := s.gh.DeleteGitHubDefaults(ctx, repo)
+				if delErr != nil {
+					b.Warn("Failed to remove some GitHub defaults: %v", delErr)
+				}
+				if len(deleted) > 0 {
+					b.OK("Removed GitHub defaults: %s", strings.Join(deleted, ", "))
+				}
+			} else {
+				b.Text("")
+				b.Text("**GitHub defaults** (don't align with conventions — recommend removing):")
+				for _, name := range githubDefaults {
+					b.Bullet(fmt.Sprintf("`%s`", name))
+				}
+			}
+		}
+
+		if len(custom) > 0 {
+			b.Text("")
+			b.Text("**Custom labels** (already existed):")
+			for _, name := range custom {
+				b.Bullet(fmt.Sprintf("`%s`", name))
+			}
+		}
+	}
+
+	// loom.yml check
+	hasConfig := false
+	if dc.Cwd != "" {
+		root, _ := s.git.Root(dc.Cwd)
+		if root != "" {
+			if _, err := readFile(root, ".github", "loom.yml"); err == nil {
+				hasConfig = true
+			}
+		}
+	}
+
+	b.Section("Agent Instructions")
+	b.Text("Present the label inventory above to the user and walk through these steps:")
+	b.Text("")
+	step := 1
+	if !in.Cleanup {
+		b.Text(fmt.Sprintf("%d. **Remove GitHub defaults**: The labels like `bug`, `enhancement`, `documentation` overlap with convention labels (`fix`, `feat`, `doc`). Ask the user if they want them removed. Use `labels(action: \"delete_defaults\")` to remove all at once, or `labels(action: \"delete\", name: \"...\")` individually.", step))
+		step++
+	}
+	b.Text(fmt.Sprintf("%d. **Project-specific labels**: Ask the user if they need labels for their project. Suggest common categories:", step))
+	step++
+	b.Bullet("**Area labels** — e.g. `frontend`, `backend`, `api`, `infra`, `database`")
+	b.Bullet("**Priority labels** — e.g. `p0`, `p1`, `p2` or `critical`, `high`, `low`")
+	b.Bullet("**Qualifier labels** — e.g. `breaking-change`, `security`, `blocked`, `needs-design`")
+	b.Text(fmt.Sprintf("%d. Use `labels(action: \"create\", name: \"...\", description: \"...\", color: \"...\")` to create labels the user wants.", step))
+	step++
+	if !hasConfig {
+		b.Text(fmt.Sprintf("%d. **Create `.github/loom.yml`**: This repo has no loom config. Offer to create one with the detected settings (base branch: %s, release branch: %s). Include any CI checks if workflows were found.", step, cfg.Branches.Base, cfg.Branches.Release))
+	}
+
 	return builderResult(b), nil, nil
 }
+
+type labelsInput struct {
+	Action      string `json:"action" jsonschema:"Action: list create or delete"`
+	Name        string `json:"name,omitempty" jsonschema:"Label name (required for create/delete)"`
+	Description string `json:"description,omitempty" jsonschema:"Label description (for create)"`
+	Color       string `json:"color,omitempty" jsonschema:"Hex color without # (for create). Default: 6e7781"`
+	Repo        string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd         string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+}
+
+func (s *Server) handleLabels(ctx context.Context, req *mcp.CallToolRequest, in labelsInput) (*mcp.CallToolResult, any, error) {
+	if r := s.requireGH(); r != nil {
+		return r, nil, nil
+	}
+
+	dc := s.detect(in.Cwd)
+	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
+	if repo == "" {
+		return errorResult("could not detect repo; pass explicitly"), nil, nil
+	}
+
+	b := newBuilder()
+
+	switch in.Action {
+	case "list":
+		labels, err := s.gh.ListLabels(ctx, repo)
+		if err != nil {
+			return errorResult("failed to list labels: %v", err), nil, nil
+		}
+		b.Header(fmt.Sprintf("Labels: %s (%d)", repo, len(labels)))
+		for _, l := range labels {
+			desc := ""
+			if l.Description != "" {
+				desc = fmt.Sprintf(" — %s", l.Description)
+			}
+			b.Bullet(fmt.Sprintf("`%s`%s (#%s)", l.Name, desc, l.Color))
+		}
+		if len(labels) == 0 {
+			b.Text("No labels")
+		}
+
+	case "create":
+		if in.Name == "" {
+			return errorResult("name is required for create"), nil, nil
+		}
+		color := in.Color
+		if color == "" {
+			color = "6e7781"
+		}
+		label := gh.Label{Name: in.Name, Description: in.Description, Color: color}
+		if err := s.gh.CreateLabel(ctx, repo, label); err != nil {
+			return errorResult("failed to create label: %v", err), nil, nil
+		}
+		b.OK("Created label `%s` (#%s)", in.Name, color)
+
+	case "delete":
+		if in.Name == "" {
+			return errorResult("name is required for delete"), nil, nil
+		}
+		if err := s.gh.DeleteLabel(ctx, repo, in.Name); err != nil {
+			return errorResult("failed to delete label: %v", err), nil, nil
+		}
+		b.OK("Deleted label `%s`", in.Name)
+
+	case "delete_defaults":
+		deleted, err := s.gh.DeleteGitHubDefaults(ctx, repo)
+		if err != nil {
+			return errorResult("failed to delete defaults: %v", err), nil, nil
+		}
+		if len(deleted) > 0 {
+			b.OK("Removed GitHub default labels: %s", strings.Join(deleted, ", "))
+		} else {
+			b.OK("No GitHub default labels found to remove")
+		}
+
+	default:
+		return errorResult("action must be list, create, delete, or delete_defaults; got %q", in.Action), nil, nil
+	}
+
+	return builderResult(b), nil, nil
+}
+
+func containsCloseRef(body string, branchPattern *regexp.Regexp, branchName string) bool {
+	issueNum := 0
+	if m := branchPattern.FindStringSubmatch(branchName); m != nil {
+		issueNum, _ = strconv.Atoi(m[2])
+	}
+	if issueNum == 0 {
+		return true // can't determine expected issue, don't flag
+	}
+	ref := fmt.Sprintf("#%d", issueNum)
+	lower := strings.ToLower(body)
+	return strings.Contains(lower, "closes "+ref) ||
+		strings.Contains(lower, "fixes "+ref) ||
+		strings.Contains(lower, "resolves "+ref)
+}
+

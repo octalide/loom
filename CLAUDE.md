@@ -31,7 +31,7 @@ Without this file, repo and branch names are auto-detected from git state. Proje
 
 ### Observability
 
-- **`status(repo?, project?)`** — Current branch, uncommitted changes, open PRs, board status. Zero required params.
+- **`status(repo?, project?)`** — Current branch, uncommitted changes, open PRs, board status, attention-needed alerts (failing CI, stale PRs, missing close refs). Zero required params.
 - **`context(issue, repo?)`** — Full issue details: description, comments, labels, linked PR, dependencies, merge readiness
 - **`activity(issue, since?, repo?)`** — Recent activity on issue + linked PR. Filter with ISO 8601 timestamp.
 - **`pr_feedback(pr, repo?)`** — Reviews, inline comments grouped by file, CI status, merge readiness
@@ -46,8 +46,9 @@ Without this file, repo and branch names are auto-detected from git state. Proje
 ### Admin
 
 - **`board_status(issue, status, repo?, project?)`** — Manual board status override
-- **`audit(fix?, repo?, project?)`** — Check workflow compliance: auth, repo settings, branch protection, stale branches, worktrees. `fix=true` auto-fixes safe issues.
-- **`setup(repo?, status_checks?)`** — Configure repo: base + release branches, branch protection, auto-delete, auto-merge
+- **`audit(fix?, repo?, project?)`** — Repo health: infrastructure compliance, PR health (failing CI, stale drafts, idle PRs, missing close refs, auto-merge), issue health (unlabeled, idle, no linked PR), workflow integrity (branch naming). `fix=true` auto-fixes safe issues including adding `Closes #N` to PR bodies and enabling auto-merge.
+- **`setup(cleanup?, repo?)`** — Configure new repo: branches, protection, auto-delete, auto-merge, convention labels. Returns label inventory and agent instructions to interactively guide the user through removing GitHub defaults, adding project-specific labels, and creating loom.yml. `cleanup=true` auto-removes GitHub default labels.
+- **`labels(action, name?, description?, color?, repo?)`** — Manage repo labels. Actions: `list`, `create`, `delete`, `delete_defaults` (batch remove GitHub defaults).
 - **`worktrees(cwd?)`** — List all worktrees with branch and issue number
 
 ## Auto-Detection

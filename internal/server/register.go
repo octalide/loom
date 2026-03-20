@@ -38,7 +38,7 @@ func (s *Server) registerTools() {
 	// Observability
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "status",
-		Description: "Get current workflow status: branch, uncommitted changes, open PRs, project board. Auto-detects everything.",
+		Description: "Get current workflow status: branch, uncommitted changes, open PRs, project board, attention-needed alerts (failing CI, stale PRs, missing close refs). Auto-detects everything.",
 	}, s.handleStatus)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
@@ -75,13 +75,18 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "audit",
-		Description: "Audit a repo for workflow compliance: auth, repo settings, branch protection, stale branches, worktrees. fix=true auto-fixes safe issues.",
+		Description: "Audit repo health: infrastructure compliance (auth, settings, protection), PR health (failing CI, stale drafts, missing auto-merge), issue health (unlabeled, idle, no linked PR), workflow integrity (branch naming, missing Closes #N). fix=true auto-fixes safe issues.",
 	}, s.handleAudit)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "setup",
-		Description: "Configure a repo with the standard branch workflow: base + release branches, branch protection, auto-delete, auto-merge. CI checks are read from .github/loom.yml.",
+		Description: "Configure a new repo: branch workflow, protection rules, auto-delete, auto-merge, convention labels. Returns a label inventory and agent instructions — walk the user through removing GitHub defaults, adding project-specific labels, and creating loom.yml. Pass cleanup=true to auto-remove GitHub default labels.",
 	}, s.handleSetup)
+
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "labels",
+		Description: "Manage repo labels. Actions: list, create, delete, delete_defaults (removes all GitHub default labels). Use after setup to customize labels for the project.",
+	}, s.handleLabels)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "worktrees",
