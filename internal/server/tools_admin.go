@@ -687,6 +687,193 @@ func (s *Server) handleLabels(ctx context.Context, req *mcp.CallToolRequest, in 
 	return builderResult(b), nil, nil
 }
 
+type releaseInput struct {
+	Action  string `json:"action" jsonschema:"Action: prepare or execute"`
+	Version string `json:"version,omitempty" jsonschema:"Version tag (required for execute, e.g. v1.2.0)"`
+	Notes   string `json:"notes,omitempty" jsonschema:"Release notes body (for execute). If omitted, uses the commit changelog from prepare."`
+	Repo    string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+}
+
+func (s *Server) handleRelease(ctx context.Context, req *mcp.CallToolRequest, in releaseInput) (*mcp.CallToolResult, any, error) {
+	if r := s.requireGH(); r != nil {
+		return r, nil, nil
+	}
+
+	dc := s.detect(in.Cwd)
+	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
+	if repo == "" {
+		return errorResult("could not detect repo; pass explicitly"), nil, nil
+	}
+	cfg := dc.Config
+
+	b := newBuilder()
+
+	switch in.Action {
+	case "prepare":
+		b.Header(fmt.Sprintf("Release Preparation: %s", repo))
+
+		latestTag, err := s.git.LatestTag(dc.Cwd)
+		if err != nil {
+			latestTag = "(none)"
+		}
+		b.KV("Current version", latestTag)
+		b.KV("Base branch", cfg.Branches.Base)
+		b.KV("Release branch", cfg.Branches.Release)
+
+		_ = s.git.Fetch(dc.Cwd, "origin", cfg.Branches.Base)
+		_ = s.git.Fetch(dc.Cwd, "origin", cfg.Branches.Release)
+
+		ahead, _ := s.git.CommitCountBetween(dc.Cwd, "origin/"+cfg.Branches.Release, "origin/"+cfg.Branches.Base)
+		if ahead == 0 {
+			b.Info("%s is up to date with %s — nothing to release", cfg.Branches.Base, cfg.Branches.Release)
+			return builderResult(b), nil, nil
+		}
+		b.OK("%s is %d commit(s) ahead of %s", cfg.Branches.Base, ahead, cfg.Branches.Release)
+
+		tagRef := latestTag
+		if latestTag == "(none)" {
+			tagRef = ""
+		}
+		commits, _ := s.git.CommitsSinceTag(dc.Cwd, tagRef)
+
+		groups := map[string][]string{}
+		for _, c := range commits {
+			parts := strings.SplitN(c, " ", 2)
+			if len(parts) < 2 {
+				continue
+			}
+			msg := parts[1]
+			ctype := "other"
+			if idx := strings.Index(msg, ":"); idx > 0 {
+				ctype = msg[:idx]
+			}
+			groups[ctype] = append(groups[ctype], msg)
+		}
+
+		if len(commits) > 0 {
+			b.Section(fmt.Sprintf("Changes since %s (%d commits)", latestTag, len(commits)))
+			order := []string{"feat", "fix", "refactor", "doc", "test", "chore", "build", "ci", "perf"}
+			shown := map[string]bool{}
+			for _, t := range order {
+				if msgs, ok := groups[t]; ok {
+					b.Text(fmt.Sprintf("**%s**:", t))
+					for _, m := range msgs {
+						b.Bullet(m)
+					}
+					shown[t] = true
+				}
+			}
+			for t, msgs := range groups {
+				if shown[t] {
+					continue
+				}
+				b.Text(fmt.Sprintf("**%s**:", t))
+				for _, m := range msgs {
+					b.Bullet(m)
+				}
+			}
+		}
+
+		ciState, checks, _ := s.gh.GetBranchCIStatus(ctx, repo, cfg.Branches.Base)
+		b.Section("CI Status")
+		if ciState == "" && len(checks) == 0 {
+			b.Info("No CI checks found on %s", cfg.Branches.Base)
+		} else {
+			b.KV("Overall", ciState)
+			for _, c := range checks {
+				status := c.Conclusion
+				if status == "" {
+					status = c.Status
+				}
+				if status == "success" {
+					b.OK("%s", c.Name)
+				} else if status == "failure" || status == "error" {
+					b.Warn("%s: %s", c.Name, status)
+				} else {
+					b.Info("%s: %s", c.Name, status)
+				}
+			}
+		}
+
+		b.Section("Agent Instructions")
+		b.Text("Review the changes and CI status above with the user, then:")
+		b.Text("1. Decide on a version number (semver). Consider: feat commits → minor bump, fix-only → patch bump, breaking changes → major bump.")
+		b.Text("2. If CI is not passing or not present, confirm with the user whether to proceed.")
+		b.Text("3. Optionally draft release notes — the commit list above can serve as a starting point.")
+		b.Text(fmt.Sprintf("4. Call `release(action: \"execute\", version: \"vX.Y.Z\")` to merge %s → %s, tag, and create a GitHub release.", cfg.Branches.Base, cfg.Branches.Release))
+
+	case "execute":
+		if in.Version == "" {
+			return errorResult("version is required for execute (e.g. v1.2.0)"), nil, nil
+		}
+		if !strings.HasPrefix(in.Version, "v") {
+			return errorResult("version must start with 'v' (e.g. v1.2.0)"), nil, nil
+		}
+
+		b.Header(fmt.Sprintf("Release: %s %s", repo, in.Version))
+
+		if err := s.git.CheckoutAndPull(dc.Cwd, cfg.Branches.Release); err != nil {
+			return errorResult("failed to checkout %s: %v", cfg.Branches.Release, err), nil, nil
+		}
+		b.OK("Checked out %s", cfg.Branches.Release)
+
+		if err := s.git.MergeBranch(dc.Cwd, "origin/"+cfg.Branches.Base); err != nil {
+			return errorResult("failed to merge %s → %s: %v", cfg.Branches.Base, cfg.Branches.Release, err), nil, nil
+		}
+		b.OK("Merged %s → %s", cfg.Branches.Base, cfg.Branches.Release)
+
+		if err := s.git.Push(dc.Cwd, cfg.Branches.Release); err != nil {
+			return errorResult("failed to push %s: %v", cfg.Branches.Release, err), nil, nil
+		}
+		b.OK("Pushed %s", cfg.Branches.Release)
+
+		if err := s.git.Tag(dc.Cwd, in.Version); err != nil {
+			return errorResult("failed to create tag %s: %v", in.Version, err), nil, nil
+		}
+		if err := s.git.PushTag(dc.Cwd, in.Version); err != nil {
+			return errorResult("failed to push tag %s: %v", in.Version, err), nil, nil
+		}
+		b.OK("Tagged %s", in.Version)
+
+		notes := in.Notes
+		if notes == "" {
+			latestTag, _ := s.git.LatestTag(dc.Cwd)
+			tagRef := ""
+			if latestTag != in.Version {
+				tagRef = latestTag
+			}
+			commits, _ := s.git.CommitsSinceTag(dc.Cwd, tagRef)
+			if len(commits) > 0 {
+				var lines []string
+				for _, c := range commits {
+					parts := strings.SplitN(c, " ", 2)
+					if len(parts) >= 2 {
+						lines = append(lines, "- "+parts[1])
+					}
+				}
+				notes = strings.Join(lines, "\n")
+			}
+		}
+
+		url, err := s.gh.CreateRelease(ctx, repo, in.Version, in.Version, notes)
+		if err != nil {
+			b.Warn("GitHub release failed: %v", err)
+			b.Text("Tag was pushed successfully. Create the release manually if needed.")
+		} else {
+			b.OK("Created release: %s", url)
+		}
+
+		_ = s.git.CheckoutAndPull(dc.Cwd, cfg.Branches.Base)
+		b.OK("Checked out %s", cfg.Branches.Base)
+
+	default:
+		return errorResult("action must be prepare or execute; got %q", in.Action), nil, nil
+	}
+
+	return builderResult(b), nil, nil
+}
+
 func containsCloseRef(body string, branchPattern *regexp.Regexp, branchName string) bool {
 	issueNum := 0
 	if m := branchPattern.FindStringSubmatch(branchName); m != nil {

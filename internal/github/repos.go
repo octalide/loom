@@ -132,6 +132,75 @@ func (c *Client) SetBranchProtection(ctx context.Context, repo, branch string, s
 	return nil
 }
 
+func (c *Client) GetBranchCIStatus(ctx context.Context, repo, branch string) (string, []CheckStatus, error) {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return "", nil, err
+	}
+	ref := "heads/" + branch
+	var checks []CheckStatus
+	state := ""
+
+	combined, _, err := c.REST.Repositories.GetCombinedStatus(ctx, owner, name, ref, nil)
+	if err == nil && combined != nil {
+		state = combined.GetState()
+		for _, s := range combined.Statuses {
+			checks = append(checks, CheckStatus{
+				Name:       s.GetContext(),
+				Conclusion: s.GetState(),
+			})
+		}
+	}
+
+	checkRuns, _, err2 := c.REST.Checks.ListCheckRunsForRef(ctx, owner, name, ref, &gh.ListCheckRunsOptions{
+		ListOptions: gh.ListOptions{PerPage: 100},
+	})
+	if err2 == nil && checkRuns != nil {
+		for _, cr := range checkRuns.CheckRuns {
+			checks = append(checks, CheckStatus{
+				Name:       cr.GetName(),
+				Status:     cr.GetStatus(),
+				Conclusion: cr.GetConclusion(),
+			})
+		}
+	}
+
+	if state == "" && len(checks) > 0 {
+		state = "pending"
+		allPass := true
+		for _, c := range checks {
+			if c.Conclusion == "failure" || c.Conclusion == "error" {
+				state = "failure"
+				allPass = false
+				break
+			}
+			if c.Status != "completed" {
+				allPass = false
+			}
+		}
+		if allPass && state != "failure" {
+			state = "success"
+		}
+	}
+	return state, checks, nil
+}
+
+func (c *Client) CreateRelease(ctx context.Context, repo, tag, title, body string) (string, error) {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return "", err
+	}
+	release, _, err := c.REST.Repositories.CreateRelease(ctx, owner, name, &gh.RepositoryRelease{
+		TagName: gh.Ptr(tag),
+		Name:    gh.Ptr(title),
+		Body:    gh.Ptr(body),
+	})
+	if err != nil {
+		return "", fmt.Errorf("create release: %w", err)
+	}
+	return release.GetHTMLURL(), nil
+}
+
 func (c *Client) WorkflowExists(ctx context.Context, repo, workflowName string) bool {
 	owner, name, err := SplitRepo(repo)
 	if err != nil {
