@@ -293,26 +293,96 @@ func (s *Server) handleFinish(ctx context.Context, req *mcp.CallToolRequest, in 
 	}
 	b.OK("Found PR #%d", pr.Number)
 
-	// Ready PR + enable auto-merge (single GraphQL flow)
 	cfg := dc.Config
-	readied, err := s.gh.ReadyAndAutoMerge(ctx, repo, pr.Number, cfg.MergeMethod)
-	if err != nil {
-		b.Warn("failed to ready/auto-merge: %v", err)
-	} else {
-		if readied {
+
+	// Ready PR if draft
+	if pr.IsDraft {
+		readied, err := s.gh.ReadyAndAutoMerge(ctx, repo, pr.Number, cfg.MergeMethod)
+		if err != nil {
+			b.Warn("failed to ready PR: %v", err)
+		} else if readied {
 			b.OK("Marked PR as ready")
-		} else {
-			b.OK("PR confirmed ready")
 		}
-		b.OK("Auto-merge enabled (%s) for PR #%d", strings.ToLower(cfg.MergeMethod), pr.Number)
 	}
 
-	// Merge readiness (after mutations so it reflects final state)
+	// Assess merge readiness to decide strategy
 	readiness, err := s.gh.AssessMergeReadiness(ctx, repo, pr.Number)
-	if err == nil {
-		b.Section("Merge Readiness")
-		for _, line := range readiness.Summary {
-			b.Bullet(line)
+	merged := false
+	if err != nil {
+		b.Warn("could not assess merge readiness: %v", err)
+	} else {
+		hasPending := false
+		hasFailing := false
+		for _, check := range readiness.Checks {
+			if check.Status != "completed" && check.Conclusion == "" {
+				hasPending = true
+			}
+			if check.Conclusion == "failure" || check.Conclusion == "error" {
+				hasFailing = true
+			}
+		}
+
+		switch {
+		case hasFailing:
+			b.Warn("CI checks are failing — PR will not be merged")
+			b.Section("Merge Readiness")
+			for _, line := range readiness.Summary {
+				b.Bullet(line)
+			}
+
+		case hasPending:
+			_, err := s.gh.ReadyAndAutoMerge(ctx, repo, pr.Number, cfg.MergeMethod)
+			if err != nil {
+				b.Warn("failed to enable auto-merge: %v", err)
+			} else {
+				b.OK("Auto-merge enabled — PR will merge when checks pass")
+			}
+
+		default:
+			switch readiness.MergeState {
+			case "clean", "unstable", "has_hooks", "":
+				if err := s.gh.MergePR(ctx, repo, pr.Number, cfg.MergeMethod); err != nil {
+					b.Warn("direct merge failed: %v", err)
+					_, autoErr := s.gh.ReadyAndAutoMerge(ctx, repo, pr.Number, cfg.MergeMethod)
+					if autoErr != nil {
+						b.Warn("auto-merge fallback also failed: %v", autoErr)
+					} else {
+						b.OK("Auto-merge enabled as fallback")
+					}
+				} else {
+					b.OK("Merged PR #%d (%s)", pr.Number, strings.ToLower(cfg.MergeMethod))
+					merged = true
+				}
+
+			case "behind":
+				b.Info("PR branch is behind %s — updating", cfg.Branches.Base)
+				if err := s.gh.UpdatePRBranch(ctx, repo, pr.Number); err != nil {
+					b.Warn("failed to update PR branch: %v", err)
+				} else {
+					b.OK("Updated PR branch with latest %s", cfg.Branches.Base)
+					_, autoErr := s.gh.ReadyAndAutoMerge(ctx, repo, pr.Number, cfg.MergeMethod)
+					if autoErr != nil {
+						b.Warn("failed to enable auto-merge after update: %v", autoErr)
+					} else {
+						b.OK("Auto-merge enabled — PR will merge when CI passes on updated branch")
+					}
+				}
+
+			case "blocked":
+				_, autoErr := s.gh.ReadyAndAutoMerge(ctx, repo, pr.Number, cfg.MergeMethod)
+				if autoErr != nil {
+					b.Warn("PR is blocked and auto-merge could not be enabled: %v", autoErr)
+				} else {
+					b.OK("Auto-merge enabled — PR will merge when requirements are met")
+				}
+
+			default:
+				b.Warn("PR is not in a mergeable state: %s", readiness.MergeState)
+				b.Section("Merge Readiness")
+				for _, line := range readiness.Summary {
+					b.Bullet(line)
+				}
+			}
 		}
 	}
 
@@ -353,8 +423,10 @@ func (s *Server) handleFinish(ctx context.Context, req *mcp.CallToolRequest, in 
 		b.Text("Ready for the next issue.")
 	}
 
-	b.Text("")
-	b.Text("Auto-merge enabled. GitHub will merge the PR when CI passes and reviews are approved, then automatically close the issue.")
+	if merged {
+		b.Text("")
+		b.Text("PR merged. GitHub will automatically close the issue.")
+	}
 
 	return builderResult(b), nil, nil
 }
