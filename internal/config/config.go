@@ -11,6 +11,7 @@ import (
 type Config struct {
 	Repo        string         `yaml:"repo"`
 	MergeMethod string         `yaml:"merge_method"`
+	Strict      *bool          `yaml:"strict,omitempty"`
 	Branches    BranchesConfig `yaml:"branches"`
 	Checks      []string       `yaml:"checks"`
 }
@@ -71,6 +72,9 @@ func merge(dst, src *Config) {
 	if src.MergeMethod != "" {
 		dst.MergeMethod = normalizeMergeMethod(src.MergeMethod)
 	}
+	if src.Strict != nil {
+		dst.Strict = src.Strict
+	}
 	if len(src.Checks) > 0 {
 		dst.Checks = src.Checks
 	}
@@ -85,6 +89,15 @@ func normalizeMergeMethod(m string) string {
 	default:
 		return "MERGE"
 	}
+}
+
+// IsStrict returns whether branch protection should require branches to be up to date.
+// Defaults to false.
+func (c *Config) IsStrict() bool {
+	if c.Strict != nil {
+		return *c.Strict
+	}
+	return false
 }
 
 // ValidBranchType checks if a branch type prefix is allowed by the config.

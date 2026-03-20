@@ -99,7 +99,7 @@ func (c *Client) GetBranchProtection(ctx context.Context, repo, branch string) (
 	return result, nil
 }
 
-func (c *Client) SetBranchProtection(ctx context.Context, repo, branch string, statusChecks []string) error {
+func (c *Client) SetBranchProtection(ctx context.Context, repo, branch string, statusChecks []string, strict bool) error {
 	owner, name, err := SplitRepo(repo)
 	if err != nil {
 		return err
@@ -119,7 +119,7 @@ func (c *Client) SetBranchProtection(ctx context.Context, repo, branch string, s
 		}
 		emptyContexts := []string{}
 		req.RequiredStatusChecks = &gh.RequiredStatusChecks{
-			Strict:   branch == "dev",
+			Strict:   strict,
 			Checks:   &checks,
 			Contexts: &emptyContexts,
 		}

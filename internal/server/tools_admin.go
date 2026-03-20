@@ -163,7 +163,7 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 		if !bp.Protected {
 			b.Warn("Branch '%s': no protection rules", branch)
 			if in.Fix {
-				if err := s.gh.SetBranchProtection(ctx, repo, branch, nil); err == nil {
+				if err := s.gh.SetBranchProtection(ctx, repo, branch, nil, cfg.IsStrict()); err == nil {
 					fixed = append(fixed, fmt.Sprintf("Set branch protection on '%s'", branch))
 				}
 			}
@@ -178,7 +178,7 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 			if len(issues) > 0 {
 				b.Warn("Branch '%s': %s", branch, strings.Join(issues, ", "))
 				if in.Fix {
-					if err := s.gh.SetBranchProtection(ctx, repo, branch, bp.StatusChecks); err == nil {
+					if err := s.gh.SetBranchProtection(ctx, repo, branch, bp.StatusChecks, cfg.IsStrict()); err == nil {
 						fixed = append(fixed, fmt.Sprintf("Fixed branch protection on '%s'", branch))
 					}
 				}
@@ -490,7 +490,7 @@ func (s *Server) handleSetup(ctx context.Context, req *mcp.CallToolRequest, in s
 
 	// Branch protection
 	for _, branch := range []string{cfg.Branches.Base, cfg.Branches.Release} {
-		if err := s.gh.SetBranchProtection(ctx, repo, branch, checks); err != nil {
+		if err := s.gh.SetBranchProtection(ctx, repo, branch, checks, cfg.IsStrict()); err != nil {
 			b.Warn("Protection %s failed: %v", branch, err)
 		} else {
 			checkInfo := " (no required checks)"
