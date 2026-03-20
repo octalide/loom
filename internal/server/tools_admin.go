@@ -206,6 +206,16 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 		} else {
 			b.OK("Repo: auto-merge enabled")
 		}
+		if settings.DefaultBranch != cfg.Branches.Base {
+			b.Warn("Repo: default branch is '%s', expected '%s'", settings.DefaultBranch, cfg.Branches.Base)
+			if in.Fix {
+				if err := s.gh.SetDefaultBranch(ctx, repo, cfg.Branches.Base); err == nil {
+					fixed = append(fixed, fmt.Sprintf("Set default branch to '%s'", cfg.Branches.Base))
+				}
+			}
+		} else {
+			b.OK("Repo: default branch is '%s'", settings.DefaultBranch)
+		}
 	}
 
 	// Branch protection
@@ -522,6 +532,13 @@ func (s *Server) handleSetup(ctx context.Context, req *mcp.CallToolRequest, in s
 		b.Warn("Repo settings failed: %v", err)
 	} else {
 		b.OK("Repo: auto-delete branches on merge, auto-merge enabled")
+	}
+
+	// Default branch
+	if err := s.gh.SetDefaultBranch(ctx, repo, cfg.Branches.Base); err != nil {
+		b.Warn("Default branch failed: %v", err)
+	} else {
+		b.OK("Repo: default branch set to '%s'", cfg.Branches.Base)
 	}
 
 	// Ensure base branch exists

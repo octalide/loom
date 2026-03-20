@@ -74,6 +74,9 @@ func (s *Server) handleStatus(ctx context.Context, req *mcp.CallToolRequest, in 
 							break
 						}
 					}
+					if readiness.MergeState == "dirty" {
+						alerts = append(alerts, fmt.Sprintf("PR #%d: merge conflicts", pr.Number))
+					}
 				}
 			}
 			if len(alerts) > 0 {
