@@ -183,6 +183,54 @@ func (c *Client) ListRemoteBranches(cwd string) ([]string, error) {
 	return branches, nil
 }
 
+func (c *Client) LatestTag(cwd string) (string, error) {
+	out, err := c.stdout(cwd, "git", "describe", "--tags", "--abbrev=0")
+	if err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+func (c *Client) CommitsSinceTag(cwd, tag string) ([]string, error) {
+	ref := tag + "..HEAD"
+	if tag == "" {
+		ref = "HEAD"
+	}
+	out, err := c.stdout(cwd, "git", "log", ref, "--oneline", "--no-merges")
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+	return strings.Split(out, "\n"), nil
+}
+
+func (c *Client) CommitCountBetween(cwd, from, to string) (int, error) {
+	out, err := c.stdout(cwd, "git", "rev-list", "--count", from+".."+to)
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	fmt.Sscanf(strings.TrimSpace(out), "%d", &n)
+	return n, nil
+}
+
+func (c *Client) MergeBranch(cwd, from string) error {
+	_, err := c.run(cwd, "git", "merge", from, "--no-edit")
+	return err
+}
+
+func (c *Client) Tag(cwd, tag string) error {
+	_, err := c.run(cwd, "git", "tag", tag)
+	return err
+}
+
+func (c *Client) PushTag(cwd, tag string) error {
+	_, err := c.run(cwd, "git", "push", "origin", tag)
+	return err
+}
+
 func (c *Client) RemoteBranchExists(cwd, branch string) bool {
 	out, err := c.stdout(cwd, "git", "ls-remote", "--heads", "origin", branch)
 	return err == nil && strings.Contains(out, branch)
