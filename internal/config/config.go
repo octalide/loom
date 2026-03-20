@@ -3,16 +3,18 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	Project  int            `yaml:"project"`
-	Repo     string         `yaml:"repo"`
-	Branches BranchesConfig `yaml:"branches"`
-	Statuses StatusesConfig `yaml:"statuses"`
-	Checks   []string       `yaml:"checks"`
+	Project     int            `yaml:"project"`
+	Repo        string         `yaml:"repo"`
+	MergeMethod string         `yaml:"merge_method"`
+	Branches    BranchesConfig `yaml:"branches"`
+	Statuses    StatusesConfig `yaml:"statuses"`
+	Checks      []string       `yaml:"checks"`
 }
 
 type BranchesConfig struct {
@@ -29,6 +31,7 @@ type StatusesConfig struct {
 
 func Default() *Config {
 	return &Config{
+		MergeMethod: "MERGE",
 		Branches: BranchesConfig{
 			Base:    "dev",
 			Release: "main",
@@ -90,8 +93,22 @@ func merge(dst, src *Config) {
 	if src.Statuses.Done != "" {
 		dst.Statuses.Done = src.Statuses.Done
 	}
+	if src.MergeMethod != "" {
+		dst.MergeMethod = normalizeMergeMethod(src.MergeMethod)
+	}
 	if len(src.Checks) > 0 {
 		dst.Checks = src.Checks
+	}
+}
+
+func normalizeMergeMethod(m string) string {
+	switch strings.ToUpper(m) {
+	case "SQUASH":
+		return "SQUASH"
+	case "REBASE":
+		return "REBASE"
+	default:
+		return "MERGE"
 	}
 }
 
