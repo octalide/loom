@@ -380,14 +380,35 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 					issues = append(issues, fmt.Sprintf("idle for %d days", int(idle.Hours()/24)))
 				}
 
-				if !containsCloseRef(pr.Body, branchPattern, pr.HeadRefName) {
+				missingCloseRef := !containsCloseRef(pr.Body, branchPattern, pr.HeadRefName)
+				if missingCloseRef {
 					issues = append(issues, "missing Closes #N in body")
+					if in.Fix {
+						if m := branchPattern.FindStringSubmatch(pr.HeadRefName); m != nil {
+							issueNum, _ := strconv.Atoi(m[2])
+							if issueNum > 0 {
+								newBody := pr.Body
+								if newBody != "" {
+									newBody += "\n\n"
+								}
+								newBody += fmt.Sprintf("Closes #%d", issueNum)
+								if err := s.gh.UpdatePRBody(ctx, repo, pr.Number, newBody); err == nil {
+									fixed = append(fixed, fmt.Sprintf("Added 'Closes #%d' to PR #%d body", issueNum, pr.Number))
+								}
+							}
+						}
+					}
 				}
 
 				readiness, err := s.gh.AssessMergeReadiness(ctx, repo, pr.Number)
 				if err == nil {
 					if !pr.IsDraft && !readiness.AutoMerge {
 						issues = append(issues, "auto-merge not enabled")
+						if in.Fix {
+							if err := s.gh.EnableAutoMerge(ctx, repo, pr.Number, cfg.MergeMethod); err == nil {
+								fixed = append(fixed, fmt.Sprintf("Enabled auto-merge on PR #%d", pr.Number))
+							}
+						}
 					}
 					hasFailure := false
 					for _, check := range readiness.Checks {
@@ -474,8 +495,9 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 }
 
 type setupInput struct {
-	Repo string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
-	Cwd  string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+	Cleanup bool   `json:"cleanup,omitempty" jsonschema:"Remove GitHub default labels that don't align with conventions. Default: false"`
+	Repo    string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleSetup(ctx context.Context, req *mcp.CallToolRequest, in setupInput) (*mcp.CallToolResult, any, error) {
@@ -573,10 +595,20 @@ func (s *Server) handleSetup(ctx context.Context, req *mcp.CallToolRequest, in s
 		}
 
 		if len(githubDefaults) > 0 {
-			b.Text("")
-			b.Text("**GitHub defaults** (don't align with conventions — recommend removing):")
-			for _, name := range githubDefaults {
-				b.Bullet(fmt.Sprintf("`%s`", name))
+			if in.Cleanup {
+				deleted, delErr := s.gh.DeleteGitHubDefaults(ctx, repo)
+				if delErr != nil {
+					b.Warn("Failed to remove some GitHub defaults: %v", delErr)
+				}
+				if len(deleted) > 0 {
+					b.OK("Removed GitHub defaults: %s", strings.Join(deleted, ", "))
+				}
+			} else {
+				b.Text("")
+				b.Text("**GitHub defaults** (don't align with conventions — recommend removing):")
+				for _, name := range githubDefaults {
+					b.Bullet(fmt.Sprintf("`%s`", name))
+				}
 			}
 		}
 
@@ -603,14 +635,20 @@ func (s *Server) handleSetup(ctx context.Context, req *mcp.CallToolRequest, in s
 	b.Section("Agent Instructions")
 	b.Text("Present the label inventory above to the user and walk through these steps:")
 	b.Text("")
-	b.Text("1. **Remove GitHub defaults**: The labels like `bug`, `enhancement`, `documentation` overlap with convention labels (`fix`, `feat`, `doc`). Ask the user if they want them removed. Use `labels(action: \"delete\", name: \"...\")` for each.")
-	b.Text("2. **Project-specific labels**: Ask the user if they need labels for their project. Suggest common categories:")
+	step := 1
+	if !in.Cleanup {
+		b.Text(fmt.Sprintf("%d. **Remove GitHub defaults**: The labels like `bug`, `enhancement`, `documentation` overlap with convention labels (`fix`, `feat`, `doc`). Ask the user if they want them removed. Use `labels(action: \"delete_defaults\")` to remove all at once, or `labels(action: \"delete\", name: \"...\")` individually.", step))
+		step++
+	}
+	b.Text(fmt.Sprintf("%d. **Project-specific labels**: Ask the user if they need labels for their project. Suggest common categories:", step))
+	step++
 	b.Bullet("**Area labels** — e.g. `frontend`, `backend`, `api`, `infra`, `database`")
 	b.Bullet("**Priority labels** — e.g. `p0`, `p1`, `p2` or `critical`, `high`, `low`")
 	b.Bullet("**Qualifier labels** — e.g. `breaking-change`, `security`, `blocked`, `needs-design`")
-	b.Text("3. Use `labels(action: \"create\", name: \"...\", description: \"...\", color: \"...\")` to create labels the user wants.")
+	b.Text(fmt.Sprintf("%d. Use `labels(action: \"create\", name: \"...\", description: \"...\", color: \"...\")` to create labels the user wants.", step))
+	step++
 	if !hasConfig {
-		b.Text(fmt.Sprintf("4. **Create `.github/loom.yml`**: This repo has no loom config. Offer to create one with the detected settings (base branch: %s, release branch: %s). Include any CI checks if workflows were found.", cfg.Branches.Base, cfg.Branches.Release))
+		b.Text(fmt.Sprintf("%d. **Create `.github/loom.yml`**: This repo has no loom config. Offer to create one with the detected settings (base branch: %s, release branch: %s). Include any CI checks if workflows were found.", step, cfg.Branches.Base, cfg.Branches.Release))
 	}
 
 	return builderResult(b), nil, nil
@@ -679,8 +717,19 @@ func (s *Server) handleLabels(ctx context.Context, req *mcp.CallToolRequest, in 
 		}
 		b.OK("Deleted label `%s`", in.Name)
 
+	case "delete_defaults":
+		deleted, err := s.gh.DeleteGitHubDefaults(ctx, repo)
+		if err != nil {
+			return errorResult("failed to delete defaults: %v", err), nil, nil
+		}
+		if len(deleted) > 0 {
+			b.OK("Removed GitHub default labels: %s", strings.Join(deleted, ", "))
+		} else {
+			b.OK("No GitHub default labels found to remove")
+		}
+
 	default:
-		return errorResult("action must be list, create, or delete; got %q", in.Action), nil, nil
+		return errorResult("action must be list, create, delete, or delete_defaults; got %q", in.Action), nil, nil
 	}
 
 	return builderResult(b), nil, nil

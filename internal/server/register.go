@@ -38,7 +38,7 @@ func (s *Server) registerTools() {
 	// Observability
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "status",
-		Description: "Get current workflow status: branch, uncommitted changes, open PRs, project board. Auto-detects everything.",
+		Description: "Get current workflow status: branch, uncommitted changes, open PRs, project board, attention-needed alerts (failing CI, stale PRs, missing close refs). Auto-detects everything.",
 	}, s.handleStatus)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
@@ -80,12 +80,12 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "setup",
-		Description: "Configure a new repo: branch workflow, protection rules, auto-delete, auto-merge, convention labels. Returns a label inventory and agent instructions — walk the user through removing GitHub defaults, adding project-specific labels, and creating loom.yml.",
+		Description: "Configure a new repo: branch workflow, protection rules, auto-delete, auto-merge, convention labels. Returns a label inventory and agent instructions — walk the user through removing GitHub defaults, adding project-specific labels, and creating loom.yml. Pass cleanup=true to auto-remove GitHub default labels.",
 	}, s.handleSetup)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "labels",
-		Description: "Manage repo labels. Actions: list, create, delete. Use after setup to customize labels for the project.",
+		Description: "Manage repo labels. Actions: list, create, delete, delete_defaults (removes all GitHub default labels). Use after setup to customize labels for the project.",
 	}, s.handleLabels)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{

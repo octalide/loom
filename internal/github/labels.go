@@ -93,6 +93,28 @@ func (c *Client) DeleteLabel(ctx context.Context, repo, labelName string) error 
 	return nil
 }
 
+// DeleteGitHubDefaults removes any GitHub default labels that exist on the repo.
+// Returns the names of labels that were deleted.
+func (c *Client) DeleteGitHubDefaults(ctx context.Context, repo string) (deleted []string, err error) {
+	existing, err := c.ListLabels(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	existingSet := make(map[string]bool)
+	for _, l := range existing {
+		existingSet[l.Name] = true
+	}
+	for _, name := range GitHubDefaultLabels {
+		if existingSet[name] {
+			if err := c.DeleteLabel(ctx, repo, name); err != nil {
+				return deleted, err
+			}
+			deleted = append(deleted, name)
+		}
+	}
+	return deleted, nil
+}
+
 // EnsureLabels creates any labels from the list that don't already exist.
 // Returns the names of labels that were created.
 func (c *Client) EnsureLabels(ctx context.Context, repo string, labels []Label) (created []string, err error) {
