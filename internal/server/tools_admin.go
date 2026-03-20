@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -356,6 +358,108 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 		b.OK("No linked worktrees")
 	}
 
+	// PR health
+	if s.gh != nil {
+		openPRs, err := s.gh.ListOpenPRs(ctx, repo)
+		if err == nil && len(openPRs) > 0 {
+			b.Section(fmt.Sprintf("PR Health (%d open)", len(openPRs)))
+			now := time.Now()
+			branchPattern := regexp.MustCompile(`^(\w+)/(\d+)`)
+			for _, pr := range openPRs {
+				var issues []string
+				createdAt, _ := time.Parse("2006-01-02T15:04:05Z", pr.CreatedAt)
+				updatedAt, _ := time.Parse("2006-01-02T15:04:05Z", pr.UpdatedAt)
+				age := now.Sub(createdAt)
+				idle := now.Sub(updatedAt)
+
+				if pr.IsDraft && age.Hours() > 7*24 {
+					issues = append(issues, fmt.Sprintf("draft for %d days", int(age.Hours()/24)))
+				}
+
+				if !pr.IsDraft && idle.Hours() > 7*24 {
+					issues = append(issues, fmt.Sprintf("idle for %d days", int(idle.Hours()/24)))
+				}
+
+				if !containsCloseRef(pr.Body, branchPattern, pr.HeadRefName) {
+					issues = append(issues, "missing Closes #N in body")
+				}
+
+				readiness, err := s.gh.AssessMergeReadiness(ctx, repo, pr.Number)
+				if err == nil {
+					if !pr.IsDraft && !readiness.AutoMerge {
+						issues = append(issues, "auto-merge not enabled")
+					}
+					hasFailure := false
+					for _, check := range readiness.Checks {
+						if check.Conclusion == "failure" || check.Conclusion == "error" {
+							hasFailure = true
+							break
+						}
+					}
+					if hasFailure {
+						issues = append(issues, "failing CI")
+					}
+					if readiness.MergeState == "dirty" {
+						issues = append(issues, "merge conflicts")
+					}
+				}
+
+				if len(issues) > 0 {
+					b.Warn("PR #%d (%s): %s", pr.Number, pr.HeadRefName, strings.Join(issues, ", "))
+				} else {
+					b.OK("PR #%d (%s)", pr.Number, pr.HeadRefName)
+				}
+			}
+		}
+
+		// Issue health
+		openIssues, err := s.gh.ListOpenIssues(ctx, repo)
+		if err == nil && len(openIssues) > 0 {
+			b.Section(fmt.Sprintf("Issue Health (%d open)", len(openIssues)))
+			now := time.Now()
+			for _, issue := range openIssues {
+				var issues []string
+				updatedAt, _ := time.Parse("2006-01-02T15:04:05Z", issue.UpdatedAt)
+				idle := now.Sub(updatedAt)
+
+				if len(issue.Labels) == 0 {
+					issues = append(issues, "no labels")
+				}
+
+				_, prErr := s.gh.FindPRForIssue(ctx, repo, issue.Number)
+				if prErr != nil && idle.Hours() > 14*24 {
+					issues = append(issues, fmt.Sprintf("no linked PR, idle for %d days", int(idle.Hours()/24)))
+				}
+
+				if len(issues) > 0 {
+					b.Warn("Issue #%d (%s): %s", issue.Number, issue.Title, strings.Join(issues, ", "))
+				}
+			}
+		}
+
+		// Workflow integrity — branch naming
+		remoteBranches, err := s.git.ListRemoteBranches(dc.Cwd)
+		if err == nil {
+			var badBranches []string
+			branchTypePattern := regexp.MustCompile(`^(\w+)/(\d+)`)
+			for _, br := range remoteBranches {
+				if br == cfg.Branches.Base || br == cfg.Branches.Release || br == "HEAD" {
+					continue
+				}
+				if !branchTypePattern.MatchString(br) {
+					badBranches = append(badBranches, br)
+				}
+			}
+			if len(badBranches) > 0 {
+				b.Section("Workflow Integrity")
+				b.Warn("Branches not following naming convention (%d):", len(badBranches))
+				for _, br := range badBranches {
+					b.Bullet(fmt.Sprintf("`%s` — expected `{type}/{issue_number}`", br))
+				}
+			}
+		}
+	}
+
 	if len(fixed) > 0 {
 		b.Section(fmt.Sprintf("Fixed (%d)", len(fixed)))
 		for _, f := range fixed {
@@ -428,7 +532,7 @@ func (s *Server) handleSetup(ctx context.Context, req *mcp.CallToolRequest, in s
 		b.Text("No CI checks configured. Add a 'checks' list to .github/loom.yml to require status checks on PRs.")
 	}
 
-	// Labels
+	// Labels — ensure convention labels, then build inventory
 	created, err := s.gh.EnsureLabels(ctx, repo, gh.DefaultLabels)
 	if err != nil {
 		b.Warn("Labels failed: %v", err)
@@ -438,8 +542,76 @@ func (s *Server) handleSetup(ctx context.Context, req *mcp.CallToolRequest, in s
 		b.OK("Labels: all defaults present")
 	}
 
-	b.Section("Next Steps")
-	b.Text("The default workflow labels (feat, fix, refactor, etc.) have been created. Ask the user if they want any project-specific labels added or any existing labels removed. Use the `labels` tool to list, create, or delete labels as needed.")
+	allLabels, labelErr := s.gh.ListLabels(ctx, repo)
+
+	conventionNames := make(map[string]bool)
+	for _, l := range gh.DefaultLabels {
+		conventionNames[l.Name] = true
+	}
+	githubDefaultNames := make(map[string]bool)
+	for _, name := range gh.GitHubDefaultLabels {
+		githubDefaultNames[name] = true
+	}
+
+	if labelErr == nil {
+		var githubDefaults, custom []string
+		for _, l := range allLabels {
+			if conventionNames[l.Name] {
+				continue
+			}
+			if githubDefaultNames[l.Name] {
+				githubDefaults = append(githubDefaults, l.Name)
+			} else {
+				custom = append(custom, l.Name)
+			}
+		}
+
+		b.Section("Label Inventory")
+		b.Text("**Convention labels** (loom workflow):")
+		for _, l := range gh.DefaultLabels {
+			b.Bullet(fmt.Sprintf("`%s` — %s", l.Name, l.Description))
+		}
+
+		if len(githubDefaults) > 0 {
+			b.Text("")
+			b.Text("**GitHub defaults** (don't align with conventions — recommend removing):")
+			for _, name := range githubDefaults {
+				b.Bullet(fmt.Sprintf("`%s`", name))
+			}
+		}
+
+		if len(custom) > 0 {
+			b.Text("")
+			b.Text("**Custom labels** (already existed):")
+			for _, name := range custom {
+				b.Bullet(fmt.Sprintf("`%s`", name))
+			}
+		}
+	}
+
+	// loom.yml check
+	hasConfig := false
+	if dc.Cwd != "" {
+		root, _ := s.git.Root(dc.Cwd)
+		if root != "" {
+			if _, err := readFile(root, ".github", "loom.yml"); err == nil {
+				hasConfig = true
+			}
+		}
+	}
+
+	b.Section("Agent Instructions")
+	b.Text("Present the label inventory above to the user and walk through these steps:")
+	b.Text("")
+	b.Text("1. **Remove GitHub defaults**: The labels like `bug`, `enhancement`, `documentation` overlap with convention labels (`fix`, `feat`, `doc`). Ask the user if they want them removed. Use `labels(action: \"delete\", name: \"...\")` for each.")
+	b.Text("2. **Project-specific labels**: Ask the user if they need labels for their project. Suggest common categories:")
+	b.Bullet("**Area labels** — e.g. `frontend`, `backend`, `api`, `infra`, `database`")
+	b.Bullet("**Priority labels** — e.g. `p0`, `p1`, `p2` or `critical`, `high`, `low`")
+	b.Bullet("**Qualifier labels** — e.g. `breaking-change`, `security`, `blocked`, `needs-design`")
+	b.Text("3. Use `labels(action: \"create\", name: \"...\", description: \"...\", color: \"...\")` to create labels the user wants.")
+	if !hasConfig {
+		b.Text(fmt.Sprintf("4. **Create `.github/loom.yml`**: This repo has no loom config. Offer to create one with the detected settings (base branch: %s, release branch: %s). Include any CI checks if workflows were found.", cfg.Branches.Base, cfg.Branches.Release))
+	}
 
 	return builderResult(b), nil, nil
 }
@@ -512,5 +684,20 @@ func (s *Server) handleLabels(ctx context.Context, req *mcp.CallToolRequest, in 
 	}
 
 	return builderResult(b), nil, nil
+}
+
+func containsCloseRef(body string, branchPattern *regexp.Regexp, branchName string) bool {
+	issueNum := 0
+	if m := branchPattern.FindStringSubmatch(branchName); m != nil {
+		issueNum, _ = strconv.Atoi(m[2])
+	}
+	if issueNum == 0 {
+		return true // can't determine expected issue, don't flag
+	}
+	ref := fmt.Sprintf("#%d", issueNum)
+	lower := strings.ToLower(body)
+	return strings.Contains(lower, "closes "+ref) ||
+		strings.Contains(lower, "fixes "+ref) ||
+		strings.Contains(lower, "resolves "+ref)
 }
 

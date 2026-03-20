@@ -75,12 +75,12 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "audit",
-		Description: "Audit a repo for workflow compliance: auth, repo settings, branch protection, stale branches, worktrees. fix=true auto-fixes safe issues.",
+		Description: "Audit repo health: infrastructure compliance (auth, settings, protection), PR health (failing CI, stale drafts, missing auto-merge), issue health (unlabeled, idle, no linked PR), workflow integrity (branch naming, missing Closes #N). fix=true auto-fixes safe issues.",
 	}, s.handleAudit)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "setup",
-		Description: "Configure a new repo: branch workflow, protection rules, auto-delete, auto-merge, default labels. Outputs next steps for the agent to discuss with the user.",
+		Description: "Configure a new repo: branch workflow, protection rules, auto-delete, auto-merge, convention labels. Returns a label inventory and agent instructions — walk the user through removing GitHub defaults, adding project-specific labels, and creating loom.yml.",
 	}, s.handleSetup)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{

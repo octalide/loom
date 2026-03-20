@@ -80,8 +80,8 @@ func (s *Server) handleUsage(ctx context.Context, req *mcp.CallToolRequest, in u
 	b.Text("")
 	b.Text("**Admin:**")
 	b.Bullet("`board_status(issue, status)` — manual board status override")
-	b.Bullet("`audit()` — check workflow compliance, fix=true auto-fixes")
-	b.Bullet("`setup()` — configure new repo: branches, protection, labels, then guides you through project-specific customization")
+	b.Bullet("`audit()` — repo health: infrastructure compliance, PR health (failing CI, stale drafts, idle PRs), issue health (unlabeled, idle, no linked PR), workflow integrity (branch naming, missing Closes #N). fix=true auto-fixes safe issues")
+	b.Bullet("`setup()` — configure new repo: branches, protection, convention labels. Returns label inventory + agent instructions to walk user through removing GitHub defaults, adding project-specific labels, and creating loom.yml")
 	b.Bullet("`labels(action, name?, description?, color?)` — list, create, or delete repo labels")
 	b.Bullet("`worktrees()` — list worktrees with issue numbers")
 

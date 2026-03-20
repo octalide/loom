@@ -13,6 +13,18 @@ type Label struct {
 	Color       string // hex without '#'
 }
 
+var GitHubDefaultLabels = []string{
+	"bug",
+	"documentation",
+	"duplicate",
+	"enhancement",
+	"good first issue",
+	"help wanted",
+	"invalid",
+	"question",
+	"wontfix",
+}
+
 var DefaultLabels = []Label{
 	{Name: "feat", Description: "New feature", Color: "1f883d"},
 	{Name: "fix", Description: "Bug fix", Color: "d73a4a"},
