@@ -297,10 +297,9 @@ func (s *Server) handleFinish(ctx context.Context, req *mcp.CallToolRequest, in 
 
 	// Ready PR if draft
 	if pr.IsDraft {
-		readied, err := s.gh.ReadyAndAutoMerge(ctx, repo, pr.Number, cfg.MergeMethod)
-		if err != nil {
+		if err := s.gh.ReadyPR(ctx, repo, pr.Number); err != nil {
 			b.Warn("failed to ready PR: %v", err)
-		} else if readied {
+		} else {
 			b.OK("Marked PR as ready")
 		}
 	}
