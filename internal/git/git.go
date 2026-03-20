@@ -162,6 +162,27 @@ func (c *Client) MergedBranches(cwd, base string, remote bool) ([]string, error)
 	return branches, nil
 }
 
+func (c *Client) ListRemoteBranches(cwd string) ([]string, error) {
+	out, err := c.stdout(cwd, "git", "ls-remote", "--heads", "origin")
+	if err != nil {
+		return nil, err
+	}
+	var branches []string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		ref := strings.TrimPrefix(parts[1], "refs/heads/")
+		branches = append(branches, ref)
+	}
+	return branches, nil
+}
+
 func (c *Client) RemoteBranchExists(cwd, branch string) bool {
 	out, err := c.stdout(cwd, "git", "ls-remote", "--heads", "origin", branch)
 	return err == nil && strings.Contains(out, branch)

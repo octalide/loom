@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -13,15 +15,13 @@ import (
 )
 
 type statusInput struct {
-	Repo    string `json:"repo,omitempty" jsonschema:"Repository in owner/repo format. Auto-detected if omitted."`
-	Project string `json:"project,omitempty" jsonschema:"GitHub Project number. Auto-detected if omitted."`
-	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+	Repo string `json:"repo,omitempty" jsonschema:"Repository in owner/repo format. Auto-detected if omitted."`
+	Cwd  string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleStatus(ctx context.Context, req *mcp.CallToolRequest, in statusInput) (*mcp.CallToolResult, any, error) {
 	dc := s.detect(in.Cwd)
 	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
-	owner := detect.FirstNonEmpty(dc.Owner, detect.OwnerOf(repo))
 
 	b := newBuilder()
 	b.Header(fmt.Sprintf("Status: %s", detect.FirstNonEmpty(repo, "(unknown repo)")))
@@ -44,37 +44,56 @@ func (s *Server) handleStatus(ctx context.Context, req *mcp.CallToolRequest, in 
 			for _, pr := range prs {
 				b.Bullet(fmt.Sprintf("#%d [%s] %s", pr.Number, pr.HeadRefName, pr.Title))
 			}
-		}
 
-		project := detect.FirstNonZero(parseInt(in.Project), dc.Project)
-		if project != 0 {
-			items, err := s.gh.GetProjectItems(ctx, owner, project)
-			if err == nil {
-				b.Section(fmt.Sprintf("Project #%d", project))
-				for status, entries := range items {
-					b.Text(fmt.Sprintf("**%s**:", status))
-					for _, e := range entries {
-						repoTag := ""
-						if e.Repo != "" && e.Repo != repo {
-							repoTag = fmt.Sprintf(" [%s]", e.Repo)
+			var alerts []string
+			now := time.Now()
+			branchPattern := regexp.MustCompile(`^(\w+)/(\d+)`)
+			for _, pr := range prs {
+				createdAt, _ := time.Parse("2006-01-02T15:04:05Z", pr.CreatedAt)
+				updatedAt, _ := time.Parse("2006-01-02T15:04:05Z", pr.UpdatedAt)
+				age := now.Sub(createdAt)
+				idle := now.Sub(updatedAt)
+
+				if pr.IsDraft && age.Hours() > 7*24 {
+					alerts = append(alerts, fmt.Sprintf("PR #%d: draft for %d days", pr.Number, int(age.Hours()/24)))
+				} else if !pr.IsDraft && idle.Hours() > 7*24 {
+					alerts = append(alerts, fmt.Sprintf("PR #%d: idle for %d days", pr.Number, int(idle.Hours()/24)))
+				}
+
+				if !containsCloseRef(pr.Body, branchPattern, pr.HeadRefName) {
+					alerts = append(alerts, fmt.Sprintf("PR #%d: missing Closes #N", pr.Number))
+				}
+
+				readiness, err := s.gh.AssessMergeReadiness(ctx, repo, pr.Number)
+				if err == nil {
+					for _, check := range readiness.Checks {
+						if check.Conclusion == "failure" || check.Conclusion == "error" {
+							alerts = append(alerts, fmt.Sprintf("PR #%d: failing CI", pr.Number))
+							break
 						}
-						b.Bullet(fmt.Sprintf("#%d%s %s", e.Number, repoTag, e.Title))
+					}
+					if readiness.MergeState == "dirty" {
+						alerts = append(alerts, fmt.Sprintf("PR #%d: merge conflicts", pr.Number))
 					}
 				}
-			} else {
-				b.Warn("failed to fetch project board: %v", err)
+			}
+			if len(alerts) > 0 {
+				b.Section("Attention Needed")
+				for _, a := range alerts {
+					b.Warn("%s", a)
+				}
 			}
 		}
+
 	}
 
 	return builderResult(b), nil, nil
 }
 
 type contextInput struct {
-	Issue   string `json:"issue" jsonschema:"Issue number"`
-	Repo    string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
-	Project string `json:"project,omitempty" jsonschema:"Project number. Auto-detected if omitted."`
-	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+	Issue string `json:"issue" jsonschema:"Issue number"`
+	Repo  string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd   string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleContext(ctx context.Context, req *mcp.CallToolRequest, in contextInput) (*mcp.CallToolResult, any, error) {

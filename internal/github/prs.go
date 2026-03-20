@@ -11,6 +11,7 @@ import (
 type PullRequest struct {
 	Number       int
 	Title        string
+	Body         string
 	URL          string
 	State        string
 	IsDraft      bool
@@ -19,6 +20,8 @@ type PullRequest struct {
 	Additions    int
 	Deletions    int
 	ChangedFiles int
+	CreatedAt    string
+	UpdatedAt    string
 }
 
 type ReviewComment struct {
@@ -170,6 +173,45 @@ func (c *Client) ReadyAndAutoMerge(ctx context.Context, repo string, number int,
 	return wasDraft, nil
 }
 
+func (c *Client) UpdatePRBody(ctx context.Context, repo string, number int, body string) error {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return err
+	}
+	_, _, err = c.REST.PullRequests.Edit(ctx, owner, name, number, &gh.PullRequest{
+		Body: gh.Ptr(body),
+	})
+	if err != nil {
+		return fmt.Errorf("update PR #%d body: %w", number, err)
+	}
+	return nil
+}
+
+func (c *Client) EnableAutoMerge(ctx context.Context, repo string, number int, mergeMethod string) error {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return err
+	}
+	pr, _, err := c.REST.PullRequests.Get(ctx, owner, name, number)
+	if err != nil {
+		return fmt.Errorf("get PR #%d: %w", number, err)
+	}
+	nodeID := pr.GetNodeID()
+	var mutation struct {
+		EnablePullRequestAutoMerge struct {
+			ClientMutationID string
+		} `graphql:"enablePullRequestAutoMerge(input: $input)"`
+	}
+	method := githubv4.PullRequestMergeMethod(mergeMethod)
+	if err := c.GraphQL.Mutate(ctx, &mutation, githubv4.EnablePullRequestAutoMergeInput{
+		PullRequestID: githubv4.ID(nodeID),
+		MergeMethod:   &method,
+	}, nil); err != nil {
+		return fmt.Errorf("enable auto-merge for PR #%d: %w", number, err)
+	}
+	return nil
+}
+
 func (c *Client) GetPRReviews(ctx context.Context, repo string, number int) ([]Review, error) {
 	owner, name, err := SplitRepo(repo)
 	if err != nil {
@@ -270,6 +312,7 @@ func prFromREST(pr *gh.PullRequest) *PullRequest {
 	return &PullRequest{
 		Number:       pr.GetNumber(),
 		Title:        pr.GetTitle(),
+		Body:         pr.GetBody(),
 		URL:          pr.GetHTMLURL(),
 		State:        pr.GetState(),
 		IsDraft:      pr.GetDraft(),
@@ -278,5 +321,7 @@ func prFromREST(pr *gh.PullRequest) *PullRequest {
 		Additions:    pr.GetAdditions(),
 		Deletions:    pr.GetDeletions(),
 		ChangedFiles: pr.GetChangedFiles(),
+		CreatedAt:    pr.GetCreatedAt().Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:    pr.GetUpdatedAt().Format("2006-01-02T15:04:05Z"),
 	}
 }

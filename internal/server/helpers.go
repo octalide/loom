@@ -2,6 +2,8 @@ package server
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -49,4 +51,8 @@ func infoResult(format string, args ...any) *mcp.CallToolResult {
 func parseInt(s string) int {
 	n, _ := strconv.Atoi(s)
 	return n
+}
+
+func readFile(parts ...string) ([]byte, error) {
+	return os.ReadFile(filepath.Join(parts...))
 }

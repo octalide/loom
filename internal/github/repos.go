@@ -8,8 +8,9 @@ import (
 )
 
 type RepoSettings struct {
-	AutoDelete bool
-	AutoMerge  bool
+	AutoDelete    bool
+	AutoMerge     bool
+	DefaultBranch string
 }
 
 type BranchProtection struct {
@@ -31,8 +32,9 @@ func (c *Client) GetRepoSettings(ctx context.Context, repo string) (*RepoSetting
 		return nil, fmt.Errorf("get repo settings: %w", err)
 	}
 	return &RepoSettings{
-		AutoDelete: r.GetDeleteBranchOnMerge(),
-		AutoMerge:  r.GetAllowAutoMerge(),
+		AutoDelete:    r.GetDeleteBranchOnMerge(),
+		AutoMerge:     r.GetAllowAutoMerge(),
+		DefaultBranch: r.GetDefaultBranch(),
 	}, nil
 }
 
@@ -47,6 +49,20 @@ func (c *Client) SetRepoSettings(ctx context.Context, repo string, autoDelete, a
 	})
 	if err != nil {
 		return fmt.Errorf("set repo settings: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) SetDefaultBranch(ctx context.Context, repo, branch string) error {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return err
+	}
+	_, _, err = c.REST.Repositories.Edit(ctx, owner, name, &gh.Repository{
+		DefaultBranch: gh.Ptr(branch),
+	})
+	if err != nil {
+		return fmt.Errorf("set default branch to %s: %w", branch, err)
 	}
 	return nil
 }

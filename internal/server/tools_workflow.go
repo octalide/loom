@@ -12,43 +12,11 @@ import (
 	"github.com/octalide/loom/internal/output"
 )
 
-type createProjectInput struct {
-	Title string `json:"title" jsonschema:"Project title"`
-	Owner string `json:"owner,omitempty" jsonschema:"GitHub owner (user or org). Auto-detected if omitted."`
-}
-
-func (s *Server) handleCreateProject(ctx context.Context, req *mcp.CallToolRequest, in createProjectInput) (*mcp.CallToolResult, any, error) {
-	if r := s.requireGH(); r != nil {
-		return r, nil, nil
-	}
-
-	owner := in.Owner
-	if owner == "" {
-		var err error
-		owner, err = s.gh.AuthenticatedUser(ctx)
-		if err != nil {
-			return errorResult("could not determine owner: %v", err), nil, nil
-		}
-	}
-
-	number, url, err := s.gh.CreateProject(ctx, in.Title, owner)
-	if err != nil {
-		return errorResult("failed to create project: %v", err), nil, nil
-	}
-
-	b := newBuilder()
-	b.Header("Project Created")
-	b.KV("Number", fmt.Sprintf("#%d", number))
-	b.KV("URL", url)
-	return builderResult(b), nil, nil
-}
-
 type createIssueInput struct {
-	Title   string `json:"title" jsonschema:"Issue title"`
-	Body    string `json:"body" jsonschema:"Issue body (markdown)"`
-	Repo    string `json:"repo,omitempty" jsonschema:"Repository in owner/repo format. Auto-detected if omitted."`
-	Project string `json:"project,omitempty" jsonschema:"GitHub Project number. Auto-detected from .github/loom.yml if omitted."`
-	Labels  string `json:"labels,omitempty" jsonschema:"Comma-separated label names to apply"`
+	Title  string `json:"title" jsonschema:"Issue title"`
+	Body   string `json:"body" jsonschema:"Issue body (markdown)"`
+	Repo   string `json:"repo,omitempty" jsonschema:"Repository in owner/repo format. Auto-detected if omitted."`
+	Labels string `json:"labels,omitempty" jsonschema:"Comma-separated label names to apply"`
 }
 
 func (s *Server) handleCreateIssue(ctx context.Context, req *mcp.CallToolRequest, in createIssueInput) (*mcp.CallToolResult, any, error) {
@@ -61,7 +29,6 @@ func (s *Server) handleCreateIssue(ctx context.Context, req *mcp.CallToolRequest
 	if repo == "" {
 		return errorResult("could not detect repo; pass explicitly"), nil, nil
 	}
-	project := detect.FirstNonZero(parseInt(in.Project), dc.Project)
 
 	b := newBuilder()
 
@@ -85,33 +52,12 @@ func (s *Server) handleCreateIssue(ctx context.Context, req *mcp.CallToolRequest
 		}
 	}
 
-	// Add to project board
-	if project != 0 {
-		owner := detect.FirstNonEmpty(dc.Owner, detect.OwnerOf(repo))
-		issueURL, _ := s.gh.GetIssueURL(ctx, repo, number)
-		itemID, err := s.gh.AddIssueToProject(ctx, owner, project, issueURL)
-		if err != nil {
-			b.Warn("failed to add to project #%d: %v", project, err)
-		} else {
-			b.OK("Added to project #%d", project)
-
-			// Set status to Todo
-			status := dc.Config.Statuses.Todo
-			if err := s.gh.SetProjectStatus(ctx, owner, project, issueURL, status, itemID); err != nil {
-				b.Warn("failed to set status to %s: %v", status, err)
-			} else {
-				b.OK("Status → %s", status)
-			}
-		}
-	}
-
 	return builderResult(b), nil, nil
 }
 
 type startInput struct {
 	Issue      string `json:"issue" jsonschema:"Issue number to start working on"`
 	Repo       string `json:"repo,omitempty" jsonschema:"Repository in owner/repo format. Auto-detected if omitted."`
-	Project    string `json:"project,omitempty" jsonschema:"GitHub Project number. Auto-detected if omitted."`
 	BranchType string `json:"branch_type,omitempty" jsonschema:"Branch prefix: feat fix doc refactor issue. Default: feat"`
 	Worktree   bool   `json:"worktree,omitempty" jsonschema:"Create a worktree instead of switching branches"`
 	Cwd        string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
@@ -127,7 +73,6 @@ func (s *Server) handleStart(ctx context.Context, req *mcp.CallToolRequest, in s
 	if repo == "" {
 		return errorResult("could not detect repo; pass explicitly"), nil, nil
 	}
-	project := detect.FirstNonZero(parseInt(in.Project), dc.Project)
 	issue := parseInt(in.Issue)
 	cfg := dc.Config
 
@@ -214,17 +159,6 @@ func (s *Server) handleStart(ctx context.Context, req *mcp.CallToolRequest, in s
 		b.OK("Pushed branch to origin")
 	}
 
-	// Set project status to In Progress
-	if project != 0 && ghIssue.URL != "" {
-		owner := detect.FirstNonEmpty(dc.Owner, detect.OwnerOf(repo))
-		status := cfg.Statuses.InProgress
-		if err := s.gh.SetProjectStatus(ctx, owner, project, ghIssue.URL, status, ""); err != nil {
-			b.Warn("failed to set status to %s: %v", status, err)
-		} else {
-			b.OK("Status → %s", status)
-		}
-	}
-
 	// Check for existing PR on resumed branches
 	prURL := ""
 	if branchExisted {
@@ -306,10 +240,9 @@ func (s *Server) handleCommit(ctx context.Context, req *mcp.CallToolRequest, in 
 }
 
 type finishInput struct {
-	Issue   string `json:"issue,omitempty" jsonschema:"Issue number. Auto-detected from branch name if omitted."`
-	Repo    string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
-	Project string `json:"project,omitempty" jsonschema:"Project number. Auto-detected if omitted."`
-	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+	Issue string `json:"issue,omitempty" jsonschema:"Issue number. Auto-detected from branch name if omitted."`
+	Repo  string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd   string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleFinish(ctx context.Context, req *mcp.CallToolRequest, in finishInput) (*mcp.CallToolResult, any, error) {
@@ -360,15 +293,6 @@ func (s *Server) handleFinish(ctx context.Context, req *mcp.CallToolRequest, in 
 	}
 	b.OK("Found PR #%d", pr.Number)
 
-	// Merge readiness
-	readiness, err := s.gh.AssessMergeReadiness(ctx, repo, pr.Number)
-	if err == nil {
-		b.Section("Merge Readiness")
-		for _, line := range readiness.Summary {
-			b.Bullet(line)
-		}
-	}
-
 	// Ready PR + enable auto-merge (single GraphQL flow)
 	cfg := dc.Config
 	readied, err := s.gh.ReadyAndAutoMerge(ctx, repo, pr.Number, cfg.MergeMethod)
@@ -381,6 +305,15 @@ func (s *Server) handleFinish(ctx context.Context, req *mcp.CallToolRequest, in 
 			b.OK("PR confirmed ready")
 		}
 		b.OK("Auto-merge enabled (%s) for PR #%d", strings.ToLower(cfg.MergeMethod), pr.Number)
+	}
+
+	// Merge readiness (after mutations so it reflects final state)
+	readiness, err := s.gh.AssessMergeReadiness(ctx, repo, pr.Number)
+	if err == nil {
+		b.Section("Merge Readiness")
+		for _, line := range readiness.Summary {
+			b.Bullet(line)
+		}
 	}
 
 	// Cleanup
@@ -421,7 +354,7 @@ func (s *Server) handleFinish(ctx context.Context, req *mcp.CallToolRequest, in 
 	}
 
 	b.Text("")
-	b.Text("Auto-merge enabled. GitHub will merge the PR when CI passes and reviews are approved, then automatically close the issue and update the project board.")
+	b.Text("Auto-merge enabled. GitHub will merge the PR when CI passes and reviews are approved, then automatically close the issue.")
 
 	return builderResult(b), nil, nil
 }
