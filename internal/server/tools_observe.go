@@ -13,15 +13,13 @@ import (
 )
 
 type statusInput struct {
-	Repo    string `json:"repo,omitempty" jsonschema:"Repository in owner/repo format. Auto-detected if omitted."`
-	Project string `json:"project,omitempty" jsonschema:"GitHub Project number. Auto-detected if omitted."`
-	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+	Repo string `json:"repo,omitempty" jsonschema:"Repository in owner/repo format. Auto-detected if omitted."`
+	Cwd  string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleStatus(ctx context.Context, req *mcp.CallToolRequest, in statusInput) (*mcp.CallToolResult, any, error) {
 	dc := s.detect(in.Cwd)
 	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
-	owner := detect.FirstNonEmpty(dc.Owner, detect.OwnerOf(repo))
 
 	b := newBuilder()
 	b.Header(fmt.Sprintf("Status: %s", detect.FirstNonEmpty(repo, "(unknown repo)")))
@@ -45,36 +43,15 @@ func (s *Server) handleStatus(ctx context.Context, req *mcp.CallToolRequest, in 
 				b.Bullet(fmt.Sprintf("#%d [%s] %s", pr.Number, pr.HeadRefName, pr.Title))
 			}
 		}
-
-		project := detect.FirstNonZero(parseInt(in.Project), dc.Project)
-		if project != 0 {
-			items, err := s.gh.GetProjectItems(ctx, owner, project)
-			if err == nil {
-				b.Section(fmt.Sprintf("Project #%d", project))
-				for status, entries := range items {
-					b.Text(fmt.Sprintf("**%s**:", status))
-					for _, e := range entries {
-						repoTag := ""
-						if e.Repo != "" && e.Repo != repo {
-							repoTag = fmt.Sprintf(" [%s]", e.Repo)
-						}
-						b.Bullet(fmt.Sprintf("#%d%s %s", e.Number, repoTag, e.Title))
-					}
-				}
-			} else {
-				b.Warn("failed to fetch project board: %v", err)
-			}
-		}
 	}
 
 	return builderResult(b), nil, nil
 }
 
 type contextInput struct {
-	Issue   string `json:"issue" jsonschema:"Issue number"`
-	Repo    string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
-	Project string `json:"project,omitempty" jsonschema:"Project number. Auto-detected if omitted."`
-	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+	Issue string `json:"issue" jsonschema:"Issue number"`
+	Repo  string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd   string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleContext(ctx context.Context, req *mcp.CallToolRequest, in contextInput) (*mcp.CallToolResult, any, error) {

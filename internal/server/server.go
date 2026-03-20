@@ -35,7 +35,7 @@ func New() (*Server, error) {
 		mcp: mcp.NewServer(
 			&mcp.Implementation{Name: "loom", Version: version},
 			&mcp.ServerOptions{
-				Instructions: "GitHub workflow automation: issues, branches, PRs, project boards.",
+				Instructions: "GitHub workflow automation: issues, branches, PRs.",
 			},
 		),
 		git: git.New(),

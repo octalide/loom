@@ -11,18 +11,13 @@ func (s *Server) registerTools() {
 
 	// Workflow lifecycle
 	mcp.AddTool(s.mcp, &mcp.Tool{
-		Name:        "create_project",
-		Description: "Create a new GitHub Project (V2). Returns project number and URL.",
-	}, s.handleCreateProject)
-
-	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "create_issue",
-		Description: "Create a GitHub issue, add it to a project board, and set status to Todo. Auto-detects repo and project from .github/loom.yml.",
+		Description: "Create a GitHub issue with optional labels. Auto-detects repo from git remote.",
 	}, s.handleCreateIssue)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "start",
-		Description: "Start working on an issue: create branch from base, push, set project status to In Progress. Auto-detects repo and project.",
+		Description: "Start working on an issue: create branch from base, push. Auto-detects repo.",
 	}, s.handleStart)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
@@ -38,7 +33,7 @@ func (s *Server) registerTools() {
 	// Observability
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "status",
-		Description: "Get current workflow status: branch, uncommitted changes, open PRs, project board. Auto-detects everything.",
+		Description: "Get current workflow status: branch, uncommitted changes, open PRs. Auto-detects everything.",
 	}, s.handleStatus)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
@@ -68,11 +63,6 @@ func (s *Server) registerTools() {
 	}, s.handleLink)
 
 	// Admin
-	mcp.AddTool(s.mcp, &mcp.Tool{
-		Name:        "board_status",
-		Description: `Manually update project board status for an issue. Status must be "Todo", "In Progress", or "Done" (or as configured in .github/loom.yml).`,
-	}, s.handleBoardStatus)
-
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "audit",
 		Description: "Audit a repo for workflow compliance: auth, repo settings, branch protection, stale branches, worktrees. fix=true auto-fixes safe issues.",

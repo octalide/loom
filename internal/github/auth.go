@@ -28,13 +28,12 @@ func ResolveToken() (string, error) {
 	return "", fmt.Errorf("no GitHub token found; set GH_TOKEN, GITHUB_TOKEN, or run 'gh auth login'")
 }
 
-// CheckAuth verifies the token works and checks for project scope.
-func (c *Client) CheckAuth(token string) (hasProjectScope bool, err error) {
+// CheckAuth verifies the token works.
+func (c *Client) CheckAuth(token string) error {
 	out, err := exec.Command("gh", "auth", "status").CombinedOutput()
 	if err != nil {
-		return false, fmt.Errorf("not authenticated: %s", strings.TrimSpace(string(out)))
+		return fmt.Errorf("not authenticated: %s", strings.TrimSpace(string(out)))
 	}
-	detail := strings.ToLower(string(out))
-	hasProjectScope = strings.Contains(detail, "project")
-	return hasProjectScope, nil
+	_ = out
+	return nil
 }

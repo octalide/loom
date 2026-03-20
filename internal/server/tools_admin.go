@@ -83,74 +83,10 @@ func (s *Server) handleLink(ctx context.Context, req *mcp.CallToolRequest, in li
 	return builderResult(b), nil, nil
 }
 
-type boardStatusInput struct {
-	Issue   string `json:"issue" jsonschema:"Issue number"`
-	Status  string `json:"status" jsonschema:"Target status: Todo or In Progress or Done"`
-	Repo    string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
-	Project string `json:"project,omitempty" jsonschema:"Project number. Auto-detected if omitted."`
-	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
-}
-
-func (s *Server) handleBoardStatus(ctx context.Context, req *mcp.CallToolRequest, in boardStatusInput) (*mcp.CallToolResult, any, error) {
-	if r := s.requireGH(); r != nil {
-		return r, nil, nil
-	}
-
-	dc := s.detect(in.Cwd)
-	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
-	if repo == "" {
-		return errorResult("could not detect repo; pass explicitly"), nil, nil
-	}
-	project := detect.FirstNonZero(parseInt(in.Project), dc.Project)
-	if project == 0 {
-		return errorResult("could not detect project number; pass explicitly or add to .github/loom.yml"), nil, nil
-	}
-
-	issueNum := parseInt(in.Issue)
-
-	cfg := dc.Config
-	validStatuses := []string{cfg.Statuses.Todo, cfg.Statuses.InProgress, cfg.Statuses.Done}
-	found := false
-	for _, v := range validStatuses {
-		if v == in.Status {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return errorResult("status must be one of %s; got %q", strings.Join(validStatuses, ", "), in.Status), nil, nil
-	}
-
-	owner := detect.FirstNonEmpty(dc.Owner, detect.OwnerOf(repo))
-
-	issueURL, err := s.gh.GetIssueURL(ctx, repo, issueNum)
-	if err != nil {
-		return errorResult("could not find issue #%d: %v", issueNum, err), nil, nil
-	}
-
-	if err := s.gh.SetProjectStatus(ctx, owner, project, issueURL, in.Status, ""); err != nil {
-		return errorResult("failed to set status: %v", err), nil, nil
-	}
-
-	b := newBuilder()
-	b.OK("Issue #%d → '%s' on project #%d", issueNum, in.Status, project)
-
-	if in.Status == cfg.Statuses.Done {
-		if err := s.gh.ArchiveProjectItem(ctx, owner, project, issueURL); err != nil {
-			b.Warn("archive failed: %v", err)
-		} else {
-			b.OK("Archived on project board")
-		}
-	}
-
-	return builderResult(b), nil, nil
-}
-
 type auditInput struct {
-	Fix     bool   `json:"fix,omitempty" jsonschema:"Auto-fix safe issues. Default: false"`
-	Repo    string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
-	Project string `json:"project,omitempty" jsonschema:"Project number. Auto-detected if omitted."`
-	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+	Fix  bool   `json:"fix,omitempty" jsonschema:"Auto-fix safe issues. Default: false"`
+	Repo string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd  string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
 func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in auditInput) (*mcp.CallToolResult, any, error) {
@@ -163,18 +99,15 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 	if repo == "" {
 		return errorResult("could not detect repo; pass explicitly"), nil, nil
 	}
-	project := detect.FirstNonZero(parseInt(in.Project), dc.Project)
 	cfg := dc.Config
 
 	b := newBuilder()
-	b.Header(fmt.Sprintf("Audit: %s (project #%d)", repo, project))
+	b.Header(fmt.Sprintf("Audit: %s", repo))
 
 	var fixed []string
 
 	// Auth
-	hasProject, err := s.gh.CheckAuth(s.gh.Token())
-	_ = hasProject
-	if err != nil {
+	if err := s.gh.CheckAuth(s.gh.Token()); err != nil {
 		b.Warn("gh auth: not authenticated")
 	} else {
 		b.OK("gh auth: authenticated")
