@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	gh "github.com/google/go-github/v84/github"
 	"github.com/shurcooL/githubv4"
@@ -127,6 +128,31 @@ func (c *Client) ListOpenPRs(ctx context.Context, repo string) ([]*PullRequest, 
 	return result, nil
 }
 
+func (c *Client) ReadyPR(ctx context.Context, repo string, number int) error {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return err
+	}
+	pr, _, err := c.REST.PullRequests.Get(ctx, owner, name, number)
+	if err != nil {
+		return fmt.Errorf("get PR #%d: %w", number, err)
+	}
+	if !pr.GetDraft() {
+		return nil
+	}
+	var mutation struct {
+		MarkPullRequestReadyForReview struct {
+			ClientMutationID string
+		} `graphql:"markPullRequestReadyForReview(input: $input)"`
+	}
+	if err := c.GraphQL.Mutate(ctx, &mutation, githubv4.MarkPullRequestReadyForReviewInput{
+		PullRequestID: githubv4.ID(pr.GetNodeID()),
+	}, nil); err != nil {
+		return fmt.Errorf("mark PR #%d ready: %w", number, err)
+	}
+	return nil
+}
+
 // ReadyAndAutoMerge marks a PR as ready for review and enables auto-merge
 // in a single flow using GraphQL for both operations to avoid REST→GraphQL
 // race conditions.
@@ -171,6 +197,39 @@ func (c *Client) ReadyAndAutoMerge(ctx context.Context, repo string, number int,
 	}
 
 	return wasDraft, nil
+}
+
+func (c *Client) UpdatePRBranch(ctx context.Context, repo string, number int) error {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return err
+	}
+	_, _, err = c.REST.PullRequests.UpdateBranch(ctx, owner, name, number, nil)
+	if err != nil {
+		return fmt.Errorf("update PR #%d branch: %w", number, err)
+	}
+	return nil
+}
+
+func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMethod string) error {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return err
+	}
+	method := "merge"
+	switch strings.ToUpper(mergeMethod) {
+	case "SQUASH":
+		method = "squash"
+	case "REBASE":
+		method = "rebase"
+	}
+	_, _, err = c.REST.PullRequests.Merge(ctx, owner, name, number, "", &gh.PullRequestOptions{
+		MergeMethod: method,
+	})
+	if err != nil {
+		return fmt.Errorf("merge PR #%d: %w", number, err)
+	}
+	return nil
 }
 
 func (c *Client) UpdatePRBody(ctx context.Context, repo string, number int, body string) error {

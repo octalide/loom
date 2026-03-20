@@ -82,4 +82,9 @@ func (s *Server) registerTools() {
 		Name:        "worktrees",
 		Description: "List all git worktrees with path, branch, and issue number.",
 	}, s.handleWorktrees)
+
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "release",
+		Description: "Prepare or execute a release. prepare: gathers changes since last tag, CI status, and suggests next steps. execute: merges base → release, tags, creates GitHub release. Version decisions are left to the agent and user.",
+	}, s.handleRelease)
 }

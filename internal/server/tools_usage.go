@@ -76,6 +76,7 @@ func (s *Server) handleUsage(ctx context.Context, req *mcp.CallToolRequest, in u
 	b.Bullet("`setup(cleanup?)` — configure new repo: branches, protection, default branch, convention labels. Returns label inventory + agent instructions. cleanup=true auto-removes GitHub defaults")
 	b.Bullet("`labels(action, name?, description?, color?)` — list, create, delete, or delete_defaults (batch remove GitHub defaults)")
 	b.Bullet("`worktrees()` — list worktrees with issue numbers")
+	b.Bullet("`release(action)` — prepare: shows changes since last tag, CI status, version suggestion. execute(version): merges base → release, tags, creates GitHub release")
 
 	b.Section("Conventions")
 	b.Bullet("Branch naming: `{type}/{issue_number}` (e.g. `feat/42`, `fix/17`)")
