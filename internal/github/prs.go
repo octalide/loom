@@ -15,6 +15,7 @@ type PullRequest struct {
 	Body         string
 	URL          string
 	State        string
+	Merged       bool
 	IsDraft      bool
 	HeadRefName  string
 	BaseRefName  string
@@ -374,6 +375,7 @@ func prFromREST(pr *gh.PullRequest) *PullRequest {
 		Body:         pr.GetBody(),
 		URL:          pr.GetHTMLURL(),
 		State:        pr.GetState(),
+		Merged:       pr.GetMerged(),
 		IsDraft:      pr.GetDraft(),
 		HeadRefName:  pr.GetHead().GetRef(),
 		BaseRefName:  pr.GetBase().GetRef(),
