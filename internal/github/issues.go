@@ -78,20 +78,26 @@ func (c *Client) GetIssueComments(ctx context.Context, repo string, number int) 
 	if err != nil {
 		return nil, err
 	}
-	comments, _, err := c.REST.Issues.ListComments(ctx, owner, name, number, &gh.IssueListCommentsOptions{
-		ListOptions: gh.ListOptions{PerPage: 100},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list comments for #%d: %w", number, err)
-	}
-
 	var result []IssueComment
-	for _, c := range comments {
-		result = append(result, IssueComment{
-			Author:    c.GetUser().GetLogin(),
-			Body:      c.GetBody(),
-			CreatedAt: c.GetCreatedAt().Format("2006-01-02T15:04:05Z"),
-		})
+	opts := &gh.IssueListCommentsOptions{
+		ListOptions: gh.ListOptions{PerPage: 100},
+	}
+	for {
+		comments, resp, err := c.REST.Issues.ListComments(ctx, owner, name, number, opts)
+		if err != nil {
+			return nil, fmt.Errorf("list comments for #%d: %w", number, err)
+		}
+		for _, c := range comments {
+			result = append(result, IssueComment{
+				Author:    c.GetUser().GetLogin(),
+				Body:      c.GetBody(),
+				CreatedAt: c.GetCreatedAt().Format("2006-01-02T15:04:05Z"),
+			})
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
 	return result, nil
 }
@@ -101,32 +107,39 @@ func (c *Client) ListOpenIssues(ctx context.Context, repo string) ([]*Issue, err
 	if err != nil {
 		return nil, err
 	}
-	ghIssues, _, err := c.REST.Issues.ListByRepo(ctx, owner, name, &gh.IssueListByRepoOptions{
+	var result []*Issue
+	opts := &gh.IssueListByRepoOptions{
 		State:       "open",
 		ListOptions: gh.ListOptions{PerPage: 100},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list open issues: %w", err)
 	}
-	var result []*Issue
-	for _, issue := range ghIssues {
-		if issue.IsPullRequest() {
-			continue
+	for {
+		ghIssues, resp, err := c.REST.Issues.ListByRepo(ctx, owner, name, opts)
+		if err != nil {
+			return nil, fmt.Errorf("list open issues: %w", err)
 		}
-		var labels []string
-		for _, l := range issue.Labels {
-			labels = append(labels, l.GetName())
+		for _, issue := range ghIssues {
+			if issue.IsPullRequest() {
+				continue
+			}
+			var labels []string
+			for _, l := range issue.Labels {
+				labels = append(labels, l.GetName())
+			}
+			result = append(result, &Issue{
+				Number:    issue.GetNumber(),
+				Title:     issue.GetTitle(),
+				Body:      issue.GetBody(),
+				URL:       issue.GetHTMLURL(),
+				State:     issue.GetState(),
+				Labels:    labels,
+				CreatedAt: issue.GetCreatedAt().Format("2006-01-02T15:04:05Z"),
+				UpdatedAt: issue.GetUpdatedAt().Format("2006-01-02T15:04:05Z"),
+			})
 		}
-		result = append(result, &Issue{
-			Number:    issue.GetNumber(),
-			Title:     issue.GetTitle(),
-			Body:      issue.GetBody(),
-			URL:       issue.GetHTMLURL(),
-			State:     issue.GetState(),
-			Labels:    labels,
-			CreatedAt: issue.GetCreatedAt().Format("2006-01-02T15:04:05Z"),
-			UpdatedAt: issue.GetUpdatedAt().Format("2006-01-02T15:04:05Z"),
-		})
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.ListOptions.Page = resp.NextPage
 	}
 	return result, nil
 }
