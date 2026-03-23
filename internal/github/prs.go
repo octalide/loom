@@ -329,19 +329,26 @@ func (c *Client) FindPRForIssue(ctx context.Context, repo string, issueNumber in
 	if err != nil {
 		return nil, err
 	}
-	query := fmt.Sprintf("#%d in:body", issueNumber)
-	prs, _, err := c.REST.PullRequests.List(ctx, owner, name, &gh.PullRequestListOptions{
-		State:       "all",
-		ListOptions: gh.ListOptions{PerPage: 10},
+	ref := fmt.Sprintf("#%d", issueNumber)
+	query := fmt.Sprintf("repo:%s/%s is:pr %s in:body", owner, name, ref)
+	results, _, err := c.REST.Search.Issues(ctx, query, &gh.SearchOptions{
+		Sort:        "updated",
+		Order:       "desc",
+		ListOptions: gh.ListOptions{PerPage: 20},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("search PRs for issue #%d: %w", issueNumber, err)
 	}
-	// Filter manually since the REST list API doesn't support search queries
-	_ = query
-	for _, pr := range prs {
-		body := pr.GetBody()
+	for _, issue := range results.Issues {
+		if !issue.IsPullRequest() {
+			continue
+		}
+		body := issue.GetBody()
 		if ContainsCloseRef(body, issueNumber) {
+			pr, _, prErr := c.REST.PullRequests.Get(ctx, owner, name, issue.GetNumber())
+			if prErr != nil {
+				continue
+			}
 			return prFromREST(pr), nil
 		}
 	}
