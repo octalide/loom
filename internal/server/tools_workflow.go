@@ -508,6 +508,70 @@ func (s *Server) ensureDraftPR(ctx context.Context, dc *detect.Context, branch s
 	b.OK("Opened draft PR: %s", prURL)
 }
 
+type assignInput struct {
+	Issue     string `json:"issue,omitempty" jsonschema:"Issue number. Auto-detected from branch name if omitted."`
+	Assignees string `json:"assignees,omitempty" jsonschema:"Comma-separated GitHub usernames. Prefix with - to unassign. If omitted, self-assigns the authenticated user."`
+	Repo      string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd       string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+}
+
+func (s *Server) handleAssign(ctx context.Context, req *mcp.CallToolRequest, in assignInput) (*mcp.CallToolResult, any, error) {
+	if r := s.requireGH(); r != nil {
+		return r, nil, nil
+	}
+
+	dc := s.detect(in.Cwd)
+	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
+	if repo == "" {
+		return errorResult("could not detect repo; pass explicitly"), nil, nil
+	}
+
+	issueNum := detect.FirstNonZero(parseInt(in.Issue), dc.IssueNumber)
+	if issueNum == 0 {
+		return errorResult("could not detect issue number; pass explicitly"), nil, nil
+	}
+
+	b := newBuilder()
+
+	if in.Assignees == "" {
+		user, err := s.gh.AuthenticatedUser(ctx)
+		if err != nil {
+			return errorResult("could not determine authenticated user: %v", err), nil, nil
+		}
+		if err := s.gh.AssignIssue(ctx, repo, issueNum, []string{user}); err != nil {
+			return errorResult("failed to self-assign: %v", err), nil, nil
+		}
+		b.OK("Assigned @%s to #%d", user, issueNum)
+		return builderResult(b), nil, nil
+	}
+
+	var toAdd, toRemove []string
+	for _, name := range parseCSV(in.Assignees) {
+		if strings.HasPrefix(name, "-") {
+			toRemove = append(toRemove, strings.TrimPrefix(name, "-"))
+		} else {
+			toAdd = append(toAdd, name)
+		}
+	}
+
+	if len(toRemove) > 0 {
+		if err := s.gh.UnassignIssue(ctx, repo, issueNum, toRemove); err != nil {
+			b.Warn("Failed to unassign: %v", err)
+		} else {
+			b.OK("Unassigned %s from #%d", strings.Join(toRemove, ", "), issueNum)
+		}
+	}
+	if len(toAdd) > 0 {
+		if err := s.gh.AssignIssue(ctx, repo, issueNum, toAdd); err != nil {
+			b.Warn("Failed to assign: %v", err)
+		} else {
+			b.OK("Assigned %s to #%d", strings.Join(toAdd, ", "), issueNum)
+		}
+	}
+
+	return builderResult(b), nil, nil
+}
+
 func parseCSV(s string) []string {
 	var result []string
 	for _, part := range strings.Split(s, ",") {
