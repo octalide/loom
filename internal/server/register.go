@@ -26,6 +26,11 @@ func (s *Server) registerTools() {
 	}, s.handleCommit)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "comment",
+		Description: "Post a comment on an issue. Use for progress updates, decisions, implementation notes, or any context worth persisting. Auto-detects issue from branch name.",
+	}, s.handleComment)
+
+	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "finish",
 		Description: "Finish an issue: push, ready PR, merge or enable auto-merge, clean up branch/worktree. Auto-detects issue from branch name.",
 	}, s.handleFinish)
