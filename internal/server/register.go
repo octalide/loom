@@ -16,6 +16,11 @@ func (s *Server) registerTools() {
 	}, s.handleCreateIssue)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "update_issue",
+		Description: "Update an issue's title, body, or labels. At least one field required. Auto-detects issue from branch.",
+	}, s.handleUpdateIssue)
+
+	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "start",
 		Description: "Start working on an issue: create branch from base, push. Auto-detects repo.",
 	}, s.handleStart)
