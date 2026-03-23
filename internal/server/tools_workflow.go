@@ -527,8 +527,11 @@ func (s *Server) waitForPRMerge(ctx context.Context, repo string, prNumber int, 
 			time.Sleep(3 * time.Second)
 			continue
 		}
-		if pr.State == "closed" {
+		if pr.Merged {
 			return "merged"
+		}
+		if pr.State == "closed" {
+			return "closed"
 		}
 		time.Sleep(3 * time.Second)
 	}
@@ -580,6 +583,8 @@ func (s *Server) handleWait(ctx context.Context, req *mcp.CallToolRequest, in wa
 	switch result {
 	case "merged":
 		b.OK("PR #%d merged", prNum)
+	case "closed":
+		b.Warn("PR #%d was closed without merging", prNum)
 	case "timeout":
 		b.Warn("Timed out after %ds — PR #%d is still open", timeout, prNum)
 	default:
