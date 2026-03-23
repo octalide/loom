@@ -201,6 +201,41 @@ func (c *Client) CreateRelease(ctx context.Context, repo, tag, title, body strin
 	return release.GetHTMLURL(), nil
 }
 
+type Release struct {
+	TagName     string
+	Name        string
+	URL         string
+	PublishedAt string
+	IsDraft     bool
+	IsPrerelease bool
+}
+
+func (c *Client) ListReleases(ctx context.Context, repo string, limit int) ([]Release, error) {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	ghReleases, _, err := c.REST.Repositories.ListReleases(ctx, owner, name, &gh.ListOptions{PerPage: limit})
+	if err != nil {
+		return nil, fmt.Errorf("list releases: %w", err)
+	}
+	var releases []Release
+	for _, r := range ghReleases {
+		releases = append(releases, Release{
+			TagName:      r.GetTagName(),
+			Name:         r.GetName(),
+			URL:          r.GetHTMLURL(),
+			PublishedAt:  r.GetPublishedAt().Format("2006-01-02"),
+			IsDraft:      r.GetDraft(),
+			IsPrerelease: r.GetPrerelease(),
+		})
+	}
+	return releases, nil
+}
+
 func (c *Client) WorkflowExists(ctx context.Context, repo, workflowName string) bool {
 	owner, name, err := SplitRepo(repo)
 	if err != nil {

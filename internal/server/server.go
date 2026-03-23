@@ -35,7 +35,7 @@ func New() (*Server, error) {
 		mcp: mcp.NewServer(
 			&mcp.Implementation{Name: "loom", Version: version},
 			&mcp.ServerOptions{
-				Instructions: "GitHub workflow automation: issues, branches, PRs, project boards.",
+				Instructions: "GitHub workflow automation: issues, branches, PRs, releases. Call `usage` first if you are unfamiliar with loom's workflow conventions (branch naming, commit messages, PR lifecycle). All tools auto-detect repo, branch, and issue number from the local git state.",
 			},
 		),
 		git: git.New(),
