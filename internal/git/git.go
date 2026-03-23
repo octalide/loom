@@ -87,8 +87,22 @@ func (c *Client) Commit(cwd, message string) error {
 	return err
 }
 
+func (c *Client) Amend(cwd, message string) error {
+	if message != "" {
+		_, err := c.run(cwd, "git", "commit", "--amend", "-m", message)
+		return err
+	}
+	_, err := c.run(cwd, "git", "commit", "--amend", "--no-edit")
+	return err
+}
+
 func (c *Client) Push(cwd, branch string) error {
 	_, err := c.run(cwd, "git", "push", "-u", "origin", branch)
+	return err
+}
+
+func (c *Client) ForcePush(cwd, branch string) error {
+	_, err := c.run(cwd, "git", "push", "--force-with-lease", "-u", "origin", branch)
 	return err
 }
 

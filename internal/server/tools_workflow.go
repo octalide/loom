@@ -219,9 +219,10 @@ func (s *Server) handleStart(ctx context.Context, req *mcp.CallToolRequest, in s
 }
 
 type commitInput struct {
-	Message string `json:"message" jsonschema:"Commit message following convention (e.g. feat: add login)"`
+	Message string `json:"message,omitempty" jsonschema:"Commit message following convention (e.g. feat: add login). Optional when amend=true (keeps existing message)."`
 	Files   string `json:"files,omitempty" jsonschema:"Space-separated file paths to stage. Default: all changes"`
 	Push    *bool  `json:"push,omitempty" jsonschema:"Push to remote after committing. Default: true"`
+	Amend   bool   `json:"amend,omitempty" jsonschema:"Amend the last commit instead of creating a new one. Force-pushes."`
 	Cwd     string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
 }
 
@@ -235,6 +236,10 @@ func (s *Server) handleCommit(ctx context.Context, req *mcp.CallToolRequest, in 
 	}
 	if branch == cfg.Branches.Base || branch == cfg.Branches.Release {
 		return errorResult("refusing to commit directly on '%s' — use `start(issue)` to create a feature branch. Call `usage` for workflow details", branch), nil, nil
+	}
+
+	if !in.Amend && in.Message == "" {
+		return errorResult("message is required (unless amend=true)"), nil, nil
 	}
 
 	push := true
@@ -251,23 +256,43 @@ func (s *Server) handleCommit(ctx context.Context, req *mcp.CallToolRequest, in 
 		return errorResult("failed to stage files: %v", err), nil, nil
 	}
 
-	if !s.git.HasStagedChanges(dc.Cwd) {
+	if !in.Amend && !s.git.HasStagedChanges(dc.Cwd) {
 		return infoResult("Nothing to commit — no changes detected after staging"), nil, nil
 	}
 
-	if err := s.git.Commit(dc.Cwd, in.Message); err != nil {
-		return errorResult("failed to commit: %v", err), nil, nil
+	b := newBuilder()
+
+	if in.Amend {
+		if err := s.git.Amend(dc.Cwd, in.Message); err != nil {
+			return errorResult("failed to amend: %v", err), nil, nil
+		}
+		b.Header("Amended")
+		if in.Message != "" {
+			b.KV("Message", in.Message)
+		} else {
+			b.Info("Kept existing commit message")
+		}
+	} else {
+		if err := s.git.Commit(dc.Cwd, in.Message); err != nil {
+			return errorResult("failed to commit: %v", err), nil, nil
+		}
+		b.Header("Committed")
+		b.KV("Message", in.Message)
 	}
 
-	b := newBuilder()
-	b.Header("Committed")
-	b.KV("Message", in.Message)
-
 	if push {
-		if err := s.git.Push(dc.Cwd, branch); err != nil {
+		pushFn := s.git.Push
+		if in.Amend {
+			pushFn = s.git.ForcePush
+		}
+		if err := pushFn(dc.Cwd, branch); err != nil {
 			b.Warn("push failed: %v", err)
 		} else {
-			b.KV("Pushed", "origin/"+branch)
+			if in.Amend {
+				b.KV("Force-pushed", "origin/"+branch)
+			} else {
+				b.KV("Pushed", "origin/"+branch)
+			}
 			s.ensureDraftPR(ctx, dc, branch, b)
 		}
 	}
