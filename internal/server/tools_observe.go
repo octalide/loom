@@ -502,6 +502,56 @@ func (s *Server) handleDependencies(ctx context.Context, req *mcp.CallToolReques
 	return builderResult(b), nil, nil
 }
 
+type diffInput struct {
+	Staged bool   `json:"staged,omitempty" jsonschema:"Show only staged changes"`
+	Base   bool   `json:"base,omitempty" jsonschema:"Diff against base branch instead of working tree (shows all PR changes)"`
+	Files  string `json:"files,omitempty" jsonschema:"Space-separated file paths to filter"`
+	Cwd    string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+}
+
+func (s *Server) handleDiff(ctx context.Context, req *mcp.CallToolRequest, in diffInput) (*mcp.CallToolResult, any, error) {
+	dc := s.detect(in.Cwd)
+	cfg := dc.Config
+
+	var files []string
+	if in.Files != "" {
+		files = strings.Fields(in.Files)
+	}
+
+	b := newBuilder()
+
+	if in.Base {
+		base := "origin/" + cfg.Branches.Base
+		b.Header(fmt.Sprintf("Diff: %s vs %s", dc.BranchName, base))
+		diff, err := s.git.DiffBranch(dc.Cwd, base, files)
+		if err != nil {
+			return errorResult("failed to diff against base: %v", err), nil, nil
+		}
+		if diff == "" {
+			b.Info("No differences from %s", base)
+		} else {
+			b.Text("```diff\n" + diff + "\n```")
+		}
+	} else {
+		label := "unstaged"
+		if in.Staged {
+			label = "staged"
+		}
+		b.Header(fmt.Sprintf("Diff: %s changes", label))
+		diff, err := s.git.Diff(dc.Cwd, in.Staged, files)
+		if err != nil {
+			return errorResult("failed to get diff: %v", err), nil, nil
+		}
+		if diff == "" {
+			b.Info("No %s changes", label)
+		} else {
+			b.Text("```diff\n" + diff + "\n```")
+		}
+	}
+
+	return builderResult(b), nil, nil
+}
+
 func formatDep(d gh.Dependency, contextRepo string) string {
 	repoTag := ""
 	if d.Repo != "" && d.Repo != contextRepo {

@@ -260,3 +260,44 @@ func (c *Client) RemoteBranchExists(cwd, branch string) bool {
 	out, err := c.stdout(cwd, "git", "ls-remote", "--heads", "origin", branch)
 	return err == nil && strings.Contains(out, branch)
 }
+
+func (c *Client) Diff(cwd string, staged bool, files []string) (string, error) {
+	args := []string{"git", "diff"}
+	if staged {
+		args = append(args, "--cached")
+	}
+	args = append(args, "--stat")
+	args = append(args, files...)
+	summary, _ := c.stdout(cwd, args...)
+
+	args2 := []string{"git", "diff"}
+	if staged {
+		args2 = append(args2, "--cached")
+	}
+	args2 = append(args2, files...)
+	full, err := c.stdout(cwd, args2...)
+	if err != nil {
+		return "", err
+	}
+	if summary != "" {
+		return summary + "\n\n" + full, nil
+	}
+	return full, nil
+}
+
+func (c *Client) DiffBranch(cwd, base string, files []string) (string, error) {
+	args := []string{"git", "diff", base + "...HEAD", "--stat"}
+	args = append(args, files...)
+	summary, _ := c.stdout(cwd, args...)
+
+	args2 := []string{"git", "diff", base + "...HEAD"}
+	args2 = append(args2, files...)
+	full, err := c.stdout(cwd, args2...)
+	if err != nil {
+		return "", err
+	}
+	if summary != "" {
+		return summary + "\n\n" + full, nil
+	}
+	return full, nil
+}
