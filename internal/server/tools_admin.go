@@ -781,7 +781,7 @@ func (s *Server) handleLabels(ctx context.Context, req *mcp.CallToolRequest, in 
 }
 
 type releaseInput struct {
-	Action  string `json:"action" jsonschema:"Action: prepare or execute"`
+	Action  string `json:"action" jsonschema:"Action: prepare, execute, or list"`
 	Version string `json:"version,omitempty" jsonschema:"Version tag (required for execute, e.g. v1.2.0)"`
 	Notes   string `json:"notes,omitempty" jsonschema:"Release notes body (for execute). If omitted, uses the commit changelog from prepare."`
 	Repo    string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
@@ -806,6 +806,10 @@ func (s *Server) handleRelease(ctx context.Context, req *mcp.CallToolRequest, in
 	case "prepare":
 		b.Header(fmt.Sprintf("Release Preparation: %s", repo))
 
+		_ = s.git.FetchTags(dc.Cwd)
+		_ = s.git.Fetch(dc.Cwd, "origin", cfg.Branches.Base)
+		_ = s.git.Fetch(dc.Cwd, "origin", cfg.Branches.Release)
+
 		latestTag, err := s.git.LatestTag(dc.Cwd)
 		if err != nil {
 			latestTag = "(none)"
@@ -813,9 +817,6 @@ func (s *Server) handleRelease(ctx context.Context, req *mcp.CallToolRequest, in
 		b.KV("Current version", latestTag)
 		b.KV("Base branch", cfg.Branches.Base)
 		b.KV("Release branch", cfg.Branches.Release)
-
-		_ = s.git.Fetch(dc.Cwd, "origin", cfg.Branches.Base)
-		_ = s.git.Fetch(dc.Cwd, "origin", cfg.Branches.Release)
 
 		ahead, _ := s.git.CommitCountBetween(dc.Cwd, "origin/"+cfg.Branches.Release, "origin/"+cfg.Branches.Base)
 		if ahead == 0 {
@@ -960,8 +961,41 @@ func (s *Server) handleRelease(ctx context.Context, req *mcp.CallToolRequest, in
 		_ = s.git.CheckoutAndPull(dc.Cwd, cfg.Branches.Base)
 		b.OK("Checked out %s", cfg.Branches.Base)
 
+	case "list":
+		b.Header(fmt.Sprintf("Releases: %s", repo))
+
+		_ = s.git.FetchTags(dc.Cwd)
+		tags, _ := s.git.ListTags(dc.Cwd, 10)
+
+		releases, relErr := s.gh.ListReleases(ctx, repo, 10)
+		releaseMap := make(map[string]gh.Release)
+		if relErr == nil {
+			for _, r := range releases {
+				releaseMap[r.TagName] = r
+			}
+		}
+
+		if len(tags) == 0 {
+			b.Info("No tags found")
+		} else {
+			for _, tag := range tags {
+				if r, ok := releaseMap[tag]; ok {
+					label := r.PublishedAt
+					if r.IsDraft {
+						label += " (draft)"
+					}
+					if r.IsPrerelease {
+						label += " (pre-release)"
+					}
+					b.Bullet(fmt.Sprintf("%s — %s — %s", tag, label, r.URL))
+				} else {
+					b.Bullet(fmt.Sprintf("%s — (no GitHub release)", tag))
+				}
+			}
+		}
+
 	default:
-		return errorResult("action must be prepare or execute; got %q", in.Action), nil, nil
+		return errorResult("action must be prepare, execute, or list; got %q", in.Action), nil, nil
 	}
 
 	return builderResult(b), nil, nil

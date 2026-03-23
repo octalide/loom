@@ -183,12 +183,32 @@ func (c *Client) ListRemoteBranches(cwd string) ([]string, error) {
 	return branches, nil
 }
 
+func (c *Client) FetchTags(cwd string) error {
+	_, err := c.run(cwd, "git", "fetch", "--tags")
+	return err
+}
+
 func (c *Client) LatestTag(cwd string) (string, error) {
 	out, err := c.stdout(cwd, "git", "describe", "--tags", "--abbrev=0")
 	if err != nil {
 		return "", err
 	}
 	return out, nil
+}
+
+func (c *Client) ListTags(cwd string, limit int) ([]string, error) {
+	out, err := c.stdout(cwd, "git", "tag", "--sort=-v:refname")
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+	tags := strings.Split(out, "\n")
+	if limit > 0 && len(tags) > limit {
+		tags = tags[:limit]
+	}
+	return tags, nil
 }
 
 func (c *Client) CommitsSinceTag(cwd, tag string) ([]string, error) {

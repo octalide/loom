@@ -95,6 +95,6 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "release",
-		Description: "Prepare or execute a release. prepare: gathers changes since last tag, CI status, and suggests next steps. execute: merges base → release, tags, creates GitHub release. Version decisions are left to the agent and user.",
+		Description: "Manage releases. list: show recent tags and GitHub releases. prepare: fetch tags, gather changes since last tag, CI status, suggest next steps. execute: merge base → release, tag, create GitHub release.",
 	}, s.handleRelease)
 }
