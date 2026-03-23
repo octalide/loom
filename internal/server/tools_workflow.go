@@ -100,6 +100,7 @@ type startInput struct {
 }
 
 func (s *Server) handleStart(ctx context.Context, req *mcp.CallToolRequest, in startInput) (*mcp.CallToolResult, any, error) {
+	defer s.invalidateDetectCache()
 	if r := s.requireGH(); r != nil {
 		return r, nil, nil
 	}
@@ -227,6 +228,7 @@ type commitInput struct {
 }
 
 func (s *Server) handleCommit(ctx context.Context, req *mcp.CallToolRequest, in commitInput) (*mcp.CallToolResult, any, error) {
+	defer s.invalidateDetectCache()
 	dc := s.detect(in.Cwd)
 	cfg := dc.Config
 
@@ -307,6 +309,7 @@ type finishInput struct {
 }
 
 func (s *Server) handleFinish(ctx context.Context, req *mcp.CallToolRequest, in finishInput) (*mcp.CallToolResult, any, error) {
+	defer s.invalidateDetectCache()
 	if r := s.requireGH(); r != nil {
 		return r, nil, nil
 	}
