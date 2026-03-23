@@ -66,6 +66,11 @@ func (s *Server) registerTools() {
 		Description: "Show all dependency and hierarchy relationships for an issue: blocked-by, blocking, parent, sub-issues.",
 	}, s.handleDependencies)
 
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "diff",
+		Description: "View changes: working tree (default), staged only (staged=true), or full branch diff against base (base=true). Filter by file paths.",
+	}, s.handleDiff)
+
 	// Relationships
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "link",
