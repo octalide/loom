@@ -153,6 +153,37 @@ func (c *Client) AddLabels(ctx context.Context, repo string, number int, labels 
 	return err
 }
 
+func (c *Client) RemoveLabel(ctx context.Context, repo string, number int, label string) error {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return err
+	}
+	_, err = c.REST.Issues.RemoveLabelForIssue(ctx, owner, name, number, label)
+	if err != nil {
+		return fmt.Errorf("remove label %q from #%d: %w", label, number, err)
+	}
+	return nil
+}
+
+func (c *Client) UpdateIssue(ctx context.Context, repo string, number int, title, body *string) error {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return err
+	}
+	req := &gh.IssueRequest{}
+	if title != nil {
+		req.Title = title
+	}
+	if body != nil {
+		req.Body = body
+	}
+	_, _, err = c.REST.Issues.Edit(ctx, owner, name, number, req)
+	if err != nil {
+		return fmt.Errorf("update issue #%d: %w", number, err)
+	}
+	return nil
+}
+
 func (c *Client) CloseIssue(ctx context.Context, repo string, number int) error {
 	owner, name, err := SplitRepo(repo)
 	if err != nil {

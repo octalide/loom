@@ -508,6 +508,81 @@ func (s *Server) ensureDraftPR(ctx context.Context, dc *detect.Context, branch s
 	b.OK("Opened draft PR: %s", prURL)
 }
 
+type updateIssueInput struct {
+	Issue        string `json:"issue,omitempty" jsonschema:"Issue number. Auto-detected from branch name if omitted."`
+	Title        string `json:"title,omitempty" jsonschema:"New issue title"`
+	Body         string `json:"body,omitempty" jsonschema:"New issue body (replaces entirely)"`
+	AddLabels    string `json:"add_labels,omitempty" jsonschema:"Comma-separated labels to add"`
+	RemoveLabels string `json:"remove_labels,omitempty" jsonschema:"Comma-separated labels to remove"`
+	Repo         string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd          string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+}
+
+func (s *Server) handleUpdateIssue(ctx context.Context, req *mcp.CallToolRequest, in updateIssueInput) (*mcp.CallToolResult, any, error) {
+	if r := s.requireGH(); r != nil {
+		return r, nil, nil
+	}
+
+	dc := s.detect(in.Cwd)
+	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
+	if repo == "" {
+		return errorResult("could not detect repo; pass explicitly"), nil, nil
+	}
+
+	issueNum := detect.FirstNonZero(parseInt(in.Issue), dc.IssueNumber)
+	if issueNum == 0 {
+		return errorResult("could not detect issue number; pass explicitly"), nil, nil
+	}
+
+	if in.Title == "" && in.Body == "" && in.AddLabels == "" && in.RemoveLabels == "" {
+		return errorResult("at least one of title, body, add_labels, or remove_labels is required"), nil, nil
+	}
+
+	b := newBuilder()
+	b.Header(fmt.Sprintf("Update #%d", issueNum))
+
+	if in.Title != "" || in.Body != "" {
+		var titlePtr, bodyPtr *string
+		if in.Title != "" {
+			titlePtr = &in.Title
+		}
+		if in.Body != "" {
+			bodyPtr = &in.Body
+		}
+		if err := s.gh.UpdateIssue(ctx, repo, issueNum, titlePtr, bodyPtr); err != nil {
+			b.Warn("Failed to update issue: %v", err)
+		} else {
+			if in.Title != "" {
+				b.OK("Title updated")
+			}
+			if in.Body != "" {
+				b.OK("Body updated")
+			}
+		}
+	}
+
+	if in.AddLabels != "" {
+		labels := parseCSV(in.AddLabels)
+		if err := s.gh.AddLabels(ctx, repo, issueNum, labels); err != nil {
+			b.Warn("Failed to add labels: %v", err)
+		} else {
+			b.OK("Added labels: %s", strings.Join(labels, ", "))
+		}
+	}
+
+	if in.RemoveLabels != "" {
+		for _, label := range parseCSV(in.RemoveLabels) {
+			if err := s.gh.RemoveLabel(ctx, repo, issueNum, label); err != nil {
+				b.Warn("Failed to remove label %q: %v", label, err)
+			} else {
+				b.OK("Removed label: %s", label)
+			}
+		}
+	}
+
+	return builderResult(b), nil, nil
+}
+
 func parseCSV(s string) []string {
 	var result []string
 	for _, part := range strings.Split(s, ",") {
