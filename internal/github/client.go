@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 
@@ -22,7 +23,10 @@ type Client struct {
 
 func NewClient(token string) *Client {
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-	httpClient := oauth2.NewClient(context.Background(), ts)
+	oauthClient := oauth2.NewClient(context.Background(), ts)
+	httpClient := &http.Client{
+		Transport: newRetryTransport(oauthClient.Transport),
+	}
 
 	return &Client{
 		REST:    gh.NewClient(httpClient),
