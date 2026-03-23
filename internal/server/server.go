@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -14,10 +16,17 @@ import (
 
 var version = "dev"
 
+const detectCacheTTL = 5 * time.Second
+
 type Server struct {
 	mcp *mcp.Server
 	git *git.Client
 	gh  *gh.Client
+
+	detectMu    sync.Mutex
+	detectCache *detect.Context
+	detectTime  time.Time
+	detectCwd   string
 }
 
 func New() (*Server, error) {
@@ -51,7 +60,24 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) detect(cwd string) *detect.Context {
-	return detect.Detect(s.git, cwd)
+	s.detectMu.Lock()
+	defer s.detectMu.Unlock()
+
+	if s.detectCache != nil && s.detectCwd == cwd && time.Since(s.detectTime) < detectCacheTTL {
+		return s.detectCache
+	}
+
+	ctx := detect.Detect(s.git, cwd)
+	s.detectCache = ctx
+	s.detectCwd = cwd
+	s.detectTime = time.Now()
+	return ctx
+}
+
+func (s *Server) invalidateDetectCache() {
+	s.detectMu.Lock()
+	s.detectCache = nil
+	s.detectMu.Unlock()
 }
 
 func (s *Server) requireGH() *mcp.CallToolResult {
