@@ -56,6 +56,41 @@ func (s *Server) handleCreateIssue(ctx context.Context, req *mcp.CallToolRequest
 	return builderResult(b), nil, nil
 }
 
+type commentInput struct {
+	Issue string `json:"issue,omitempty" jsonschema:"Issue number. Auto-detected from branch name if omitted."`
+	Body  string `json:"body" jsonschema:"Comment body (markdown)"`
+	Repo  string `json:"repo,omitempty" jsonschema:"Repository. Auto-detected if omitted."`
+	Cwd   string `json:"cwd,omitempty" jsonschema:"Working directory for git operations"`
+}
+
+func (s *Server) handleComment(ctx context.Context, req *mcp.CallToolRequest, in commentInput) (*mcp.CallToolResult, any, error) {
+	if r := s.requireGH(); r != nil {
+		return r, nil, nil
+	}
+
+	dc := s.detect(in.Cwd)
+	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
+	if repo == "" {
+		return errorResult("could not detect repo; pass explicitly"), nil, nil
+	}
+
+	issueNum := detect.FirstNonZero(parseInt(in.Issue), dc.IssueNumber)
+	if issueNum == 0 {
+		return errorResult("could not detect issue number; pass explicitly"), nil, nil
+	}
+
+	taggedBody := in.Body + "\n\n<!-- loom:comment -->"
+	url, err := s.gh.CreateIssueComment(ctx, repo, issueNum, taggedBody)
+	if err != nil {
+		return errorResult("failed to post comment: %v", err), nil, nil
+	}
+
+	b := newBuilder()
+	b.OK("Comment posted on #%d", issueNum)
+	b.KV("URL", url)
+	return builderResult(b), nil, nil
+}
+
 type startInput struct {
 	Issue      string `json:"issue" jsonschema:"Issue number to start working on"`
 	Repo       string `json:"repo,omitempty" jsonschema:"Repository in owner/repo format. Auto-detected if omitted."`

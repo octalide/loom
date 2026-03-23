@@ -19,6 +19,7 @@ type Dependencies struct {
 	Blocking  []Dependency
 	Parent    *Dependency
 	SubIssues []Dependency
+	Warnings  []string
 }
 
 func (c *Client) AddBlockingLink(ctx context.Context, repo string, issue int, targetRepo string, targetIssue int, relationship string) error {
@@ -246,18 +247,29 @@ func (c *Client) GetDependencies(ctx context.Context, repo string, issueNumber i
 	// Query sub-issues via REST
 	owner, name, err := SplitRepo(repo)
 	if err == nil {
-		deps.SubIssues = c.getSubIssues(ctx, owner, name, issueNumber)
-		deps.Parent = c.getParentIssue(ctx, owner, name, issueNumber, repo)
+		subIssues, subErr := c.getSubIssues(ctx, owner, name, issueNumber)
+		if subErr != nil {
+			deps.Warnings = append(deps.Warnings, fmt.Sprintf("sub-issues unavailable: %v", subErr))
+		} else {
+			deps.SubIssues = subIssues
+		}
+
+		parent, parentErr := c.getParentIssue(ctx, owner, name, issueNumber, repo)
+		if parentErr != nil {
+			deps.Warnings = append(deps.Warnings, fmt.Sprintf("parent unavailable: %v", parentErr))
+		} else {
+			deps.Parent = parent
+		}
 	}
 
 	return deps, nil
 }
 
-func (c *Client) getSubIssues(ctx context.Context, owner, name string, issueNumber int) []Dependency {
+func (c *Client) getSubIssues(ctx context.Context, owner, name string, issueNumber int) ([]Dependency, error) {
 	url := fmt.Sprintf("repos/%s/%s/issues/%d/sub_issues", owner, name, issueNumber)
 	req, err := c.REST.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 	var subIssues []struct {
 		Number int    `json:"number"`
@@ -266,7 +278,7 @@ func (c *Client) getSubIssues(ctx context.Context, owner, name string, issueNumb
 	}
 	_, err = c.REST.Do(ctx, req, &subIssues)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("fetch sub-issues: %w", err)
 	}
 	var deps []Dependency
 	for _, s := range subIssues {
@@ -275,22 +287,14 @@ func (c *Client) getSubIssues(ctx context.Context, owner, name string, issueNumb
 			Repo: owner + "/" + name,
 		})
 	}
-	return deps
+	return deps, nil
 }
 
-func (c *Client) getParentIssue(ctx context.Context, owner, name string, issueNumber int, repo string) *Dependency {
-	issue, _, err := c.REST.Issues.Get(ctx, owner, name, issueNumber)
-	if err != nil {
-		return nil
-	}
-	// The parent field is available in the issue response if the issue has a parent
-	// Check via the raw JSON since go-github may not have this field yet
-	_ = issue
-	// For now, fall back to the REST API endpoint
+func (c *Client) getParentIssue(ctx context.Context, owner, name string, issueNumber int, repo string) (*Dependency, error) {
 	url := fmt.Sprintf("repos/%s/%s/issues/%d", owner, name, issueNumber)
 	req, err := c.REST.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 	var issueData struct {
 		Parent *struct {
@@ -300,15 +304,18 @@ func (c *Client) getParentIssue(ctx context.Context, owner, name string, issueNu
 		} `json:"parent"`
 	}
 	_, err = c.REST.Do(ctx, req, &issueData)
-	if err != nil || issueData.Parent == nil {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("fetch parent: %w", err)
+	}
+	if issueData.Parent == nil {
+		return nil, nil
 	}
 	return &Dependency{
 		Number: issueData.Parent.Number,
 		Title:  issueData.Parent.Title,
 		State:  issueData.Parent.State,
 		Repo:   repo,
-	}
+	}, nil
 }
 
 func (c *Client) issueNodeID(ctx context.Context, repo string, number int) (string, error) {

@@ -83,6 +83,38 @@ func (s *Server) handleLink(ctx context.Context, req *mcp.CallToolRequest, in li
 
 	b := newBuilder()
 	b.OK("%s %s: #%d → #%d%s", action, relationship, issueNum, targetNum, cross)
+
+	deps, verifyErr := s.gh.GetDependencies(ctx, repo, issueNum)
+	if verifyErr != nil {
+		b.Warn("Could not verify: %v", verifyErr)
+	} else {
+		hasDeps := len(deps.BlockedBy) > 0 || len(deps.Blocking) > 0 || deps.Parent != nil || len(deps.SubIssues) > 0
+		if hasDeps {
+			b.Section("Resulting State")
+			if len(deps.BlockedBy) > 0 {
+				for _, d := range deps.BlockedBy {
+					b.Bullet(fmt.Sprintf("blocked by %s", formatDep(d, repo)))
+				}
+			}
+			if len(deps.Blocking) > 0 {
+				for _, d := range deps.Blocking {
+					b.Bullet(fmt.Sprintf("blocks %s", formatDep(d, repo)))
+				}
+			}
+			if deps.Parent != nil {
+				b.Bullet(fmt.Sprintf("child of %s", formatDep(*deps.Parent, repo)))
+			}
+			if len(deps.SubIssues) > 0 {
+				for _, d := range deps.SubIssues {
+					b.Bullet(fmt.Sprintf("parent of %s", formatDep(d, repo)))
+				}
+			}
+		}
+		for _, w := range deps.Warnings {
+			b.Warn("%s", w)
+		}
+	}
+
 	return builderResult(b), nil, nil
 }
 
@@ -406,6 +438,36 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 
 				if len(issues) > 0 {
 					b.Warn("Issue #%d (%s): %s", issue.Number, issue.Title, strings.Join(issues, ", "))
+				}
+			}
+		}
+
+		// Relationship integrity
+		if openIssues != nil && len(openIssues) > 0 {
+			var relIssues []string
+			for _, issue := range openIssues {
+				deps, depsErr := s.gh.GetDependencies(ctx, repo, issue.Number)
+				if depsErr != nil {
+					continue
+				}
+				for _, w := range deps.Warnings {
+					relIssues = append(relIssues, fmt.Sprintf("Issue #%d: %s", issue.Number, w))
+				}
+				for _, d := range deps.BlockedBy {
+					if strings.EqualFold(d.State, "CLOSED") || strings.EqualFold(d.State, "closed") {
+						relIssues = append(relIssues, fmt.Sprintf("Issue #%d: blocked by #%d which is closed (stale link)", issue.Number, d.Number))
+					}
+				}
+				for _, d := range deps.Blocking {
+					if strings.EqualFold(d.State, "CLOSED") || strings.EqualFold(d.State, "closed") {
+						relIssues = append(relIssues, fmt.Sprintf("Issue #%d: blocks #%d which is closed (stale link)", issue.Number, d.Number))
+					}
+				}
+			}
+			if len(relIssues) > 0 {
+				b.Section(fmt.Sprintf("Relationship Integrity (%d issues)", len(relIssues)))
+				for _, ri := range relIssues {
+					b.Warn("%s", ri)
 				}
 			}
 		}
