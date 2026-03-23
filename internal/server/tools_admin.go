@@ -357,22 +357,21 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 					issues = append(issues, fmt.Sprintf("idle for %d days", int(idle.Hours()/24)))
 				}
 
-				missingCloseRef := !containsCloseRef(pr.Body, branchPattern, pr.HeadRefName)
+				branchIssueNum := 0
+				if m := branchPattern.FindStringSubmatch(pr.HeadRefName); m != nil {
+					branchIssueNum, _ = strconv.Atoi(m[2])
+				}
+				missingCloseRef := branchIssueNum > 0 && !gh.ContainsCloseRef(pr.Body, branchIssueNum)
 				if missingCloseRef {
 					issues = append(issues, "missing Closes #N in body")
 					if in.Fix {
-						if m := branchPattern.FindStringSubmatch(pr.HeadRefName); m != nil {
-							issueNum, _ := strconv.Atoi(m[2])
-							if issueNum > 0 {
-								newBody := pr.Body
-								if newBody != "" {
-									newBody += "\n\n"
-								}
-								newBody += fmt.Sprintf("Closes #%d", issueNum)
-								if err := s.gh.UpdatePRBody(ctx, repo, pr.Number, newBody); err == nil {
-									fixed = append(fixed, fmt.Sprintf("Added 'Closes #%d' to PR #%d body", issueNum, pr.Number))
-								}
-							}
+						newBody := pr.Body
+						if newBody != "" {
+							newBody += "\n\n"
+						}
+						newBody += fmt.Sprintf("Closes #%d", branchIssueNum)
+						if err := s.gh.UpdatePRBody(ctx, repo, pr.Number, newBody); err == nil {
+							fixed = append(fixed, fmt.Sprintf("Added 'Closes #%d' to PR #%d body", branchIssueNum, pr.Number))
 						}
 					}
 				}
@@ -1001,18 +1000,4 @@ func (s *Server) handleRelease(ctx context.Context, req *mcp.CallToolRequest, in
 	return builderResult(b), nil, nil
 }
 
-func containsCloseRef(body string, branchPattern *regexp.Regexp, branchName string) bool {
-	issueNum := 0
-	if m := branchPattern.FindStringSubmatch(branchName); m != nil {
-		issueNum, _ = strconv.Atoi(m[2])
-	}
-	if issueNum == 0 {
-		return true // can't determine expected issue, don't flag
-	}
-	ref := fmt.Sprintf("#%d", issueNum)
-	lower := strings.ToLower(body)
-	return strings.Contains(lower, "closes "+ref) ||
-		strings.Contains(lower, "fixes "+ref) ||
-		strings.Contains(lower, "resolves "+ref)
-}
 

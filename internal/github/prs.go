@@ -344,7 +344,7 @@ func (c *Client) FindPRForIssue(ctx context.Context, repo string, issueNumber in
 			continue
 		}
 		body := issue.GetBody()
-		if containsCloseRef(body, issueNumber) {
+		if ContainsCloseRef(body, issueNumber) {
 			pr, _, prErr := c.REST.PullRequests.Get(ctx, owner, name, issue.GetNumber())
 			if prErr != nil {
 				continue
@@ -355,24 +355,14 @@ func (c *Client) FindPRForIssue(ctx context.Context, repo string, issueNumber in
 	return nil, fmt.Errorf("no PR found referencing issue #%d", issueNumber)
 }
 
-func containsCloseRef(body string, issue int) bool {
+// ContainsCloseRef checks whether body contains a GitHub auto-close reference
+// (Closes #N, Fixes #N, or Resolves #N) for the given issue number.
+func ContainsCloseRef(body string, issue int) bool {
 	ref := fmt.Sprintf("#%d", issue)
-	return len(body) > 0 && (contains(body, "Closes "+ref) || contains(body, "closes "+ref) ||
-		contains(body, "Fixes "+ref) || contains(body, "fixes "+ref) ||
-		contains(body, "Resolves "+ref) || contains(body, "resolves "+ref))
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && findSubstring(s, substr)
-}
-
-func findSubstring(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
+	lower := strings.ToLower(body)
+	return strings.Contains(lower, "closes "+ref) ||
+		strings.Contains(lower, "fixes "+ref) ||
+		strings.Contains(lower, "resolves "+ref)
 }
 
 func prFromREST(pr *gh.PullRequest) *PullRequest {
