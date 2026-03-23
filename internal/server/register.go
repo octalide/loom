@@ -40,6 +40,11 @@ func (s *Server) registerTools() {
 		Description: "Wait for a PR to merge. Polls every 3s until merged or timeout. Blocks for the full duration of CI — only use when subsequent work depends on the merge result. If work can be done in parallel, skip wait.",
 	}, s.handleWait)
 
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "assign",
+		Description: "Assign or unassign users on an issue. Omit assignees to self-assign. Prefix username with - to unassign. Auto-detects issue from branch.",
+	}, s.handleAssign)
+
 	// Observability
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "status",

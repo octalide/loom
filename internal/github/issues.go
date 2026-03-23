@@ -193,3 +193,27 @@ func (c *Client) GetIssueURL(ctx context.Context, repo string, number int) (stri
 	}
 	return issue.GetHTMLURL(), nil
 }
+
+func (c *Client) AssignIssue(ctx context.Context, repo string, number int, assignees []string) error {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return err
+	}
+	_, _, err = c.REST.Issues.AddAssignees(ctx, owner, name, number, assignees)
+	if err != nil {
+		return fmt.Errorf("assign issue #%d: %w", number, err)
+	}
+	return nil
+}
+
+func (c *Client) UnassignIssue(ctx context.Context, repo string, number int, assignees []string) error {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return err
+	}
+	_, _, err = c.REST.Issues.RemoveAssignees(ctx, owner, name, number, assignees)
+	if err != nil {
+		return fmt.Errorf("unassign issue #%d: %w", number, err)
+	}
+	return nil
+}
