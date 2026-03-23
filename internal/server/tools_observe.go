@@ -162,7 +162,7 @@ func (s *Server) handleContext(ctx context.Context, req *mcp.CallToolRequest, in
 	deps, err := s.gh.GetDependencies(ctx, repo, issueNum)
 	if err == nil {
 		hasDeps := len(deps.BlockedBy) > 0 || len(deps.Blocking) > 0 || deps.Parent != nil || len(deps.SubIssues) > 0
-		if hasDeps {
+		if hasDeps || len(deps.Warnings) > 0 {
 			b.Section("Dependencies")
 			if len(deps.BlockedBy) > 0 {
 				b.Text("**Blocked by**:")
@@ -185,6 +185,9 @@ func (s *Server) handleContext(ctx context.Context, req *mcp.CallToolRequest, in
 				for _, d := range deps.SubIssues {
 					b.Bullet(formatDep(d, repo))
 				}
+			}
+			for _, w := range deps.Warnings {
+				b.Warn("%s", w)
 			}
 		}
 	}
@@ -437,8 +440,12 @@ func (s *Server) handleDependencies(ctx context.Context, req *mcp.CallToolReques
 		}
 	}
 
-	if !hasAny {
+	if !hasAny && len(deps.Warnings) == 0 {
 		b.Info("No relationships found")
+	}
+
+	for _, w := range deps.Warnings {
+		b.Warn("%s", w)
 	}
 
 	return builderResult(b), nil, nil
