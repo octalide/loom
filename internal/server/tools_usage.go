@@ -64,7 +64,7 @@ func (s *Server) handleUsage(ctx context.Context, req *mcp.CallToolRequest, in u
 	b.Bullet("`wait(pr, timeout?)` — wait for a PR to merge. Polls every 3s, default 90s timeout. Blocks for the full duration of CI — only use when subsequent work depends on the merge result. If work can be done in parallel, skip wait")
 	b.Text("")
 	b.Text("**Observability (read-only):**")
-	b.Bullet("`status()` — branch, changes, open PRs, attention-needed alerts")
+	b.Bullet("`status()` — current work: issue, PR state, recent notes, blockers, attention items. On base branch: branch + working tree only")
 	b.Bullet("`context(issue)` — full issue details + linked PR + deps")
 	b.Bullet("`activity(issue)` — recent comments, reviews, CI status")
 	b.Bullet("`pr_feedback(pr)` — reviews, inline comments, merge readiness")

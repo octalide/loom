@@ -3,9 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -13,6 +11,8 @@ import (
 	gh "github.com/octalide/loom/internal/github"
 	"github.com/octalide/loom/internal/output"
 )
+
+const loomCommentMarker = "<!-- loom:comment -->"
 
 type statusInput struct {
 	Repo string `json:"repo,omitempty" jsonschema:"Repository in owner/repo format. Auto-detected if omitted."`
@@ -22,10 +22,10 @@ type statusInput struct {
 func (s *Server) handleStatus(ctx context.Context, req *mcp.CallToolRequest, in statusInput) (*mcp.CallToolResult, any, error) {
 	dc := s.detect(in.Cwd)
 	repo := detect.FirstNonEmpty(in.Repo, dc.Repo)
+	cfg := dc.Config
 
 	b := newBuilder()
 	b.Header(fmt.Sprintf("Status: %s", detect.FirstNonEmpty(repo, "(unknown repo)")))
-
 	b.KV("Branch", detect.FirstNonEmpty(dc.BranchName, "(unknown)"))
 
 	if s.git.HasUncommittedChanges(dc.Cwd) {
@@ -34,57 +34,108 @@ func (s *Server) handleStatus(ctx context.Context, req *mcp.CallToolRequest, in 
 		b.OK("Working tree clean")
 	}
 
-	if s.gh != nil && repo != "" {
-		prs, err := s.gh.ListOpenPRs(ctx, repo)
+	isFeature := dc.BranchName != "" &&
+		dc.BranchName != cfg.Branches.Base &&
+		dc.BranchName != cfg.Branches.Release
+
+	if !isFeature || s.gh == nil || repo == "" {
+		if !isFeature {
+			b.Info("On base branch — use `start(issue)` to begin work")
+		}
+		return builderResult(b), nil, nil
+	}
+
+	issueNum := dc.IssueNumber
+	if issueNum == 0 {
+		b.Info("Could not detect issue number from branch name")
+		return builderResult(b), nil, nil
+	}
+
+	// Issue details
+	ghIssue, err := s.gh.GetIssue(ctx, repo, issueNum)
+	if err == nil {
+		b.KV("Issue", fmt.Sprintf("#%d: %s (%s)", ghIssue.Number, ghIssue.Title, ghIssue.State))
+	}
+
+	// Linked PR
+	pr, prErr := s.gh.FindPRForBranch(ctx, repo, dc.BranchName)
+	if prErr == nil {
+		state := pr.State
+		if pr.IsDraft {
+			state = "draft"
+		}
+		b.KV("PR", fmt.Sprintf("#%d (%s)", pr.Number, state))
+
+		readiness, err := s.gh.AssessMergeReadiness(ctx, repo, pr.Number)
 		if err == nil {
-			b.Section(fmt.Sprintf("Open PRs (%d)", len(prs)))
-			if len(prs) == 0 {
-				b.Text("None")
-			}
-			for _, pr := range prs {
-				b.Bullet(fmt.Sprintf("#%d [%s] %s", pr.Number, pr.HeadRefName, pr.Title))
+			b.Section("PR Readiness")
+			for _, line := range readiness.Summary {
+				b.Bullet(line)
 			}
 
 			var alerts []string
-			now := time.Now()
-			branchPattern := regexp.MustCompile(`^(\w+)/(\d+)`)
-			for _, pr := range prs {
-				createdAt, _ := time.Parse("2006-01-02T15:04:05Z", pr.CreatedAt)
-				updatedAt, _ := time.Parse("2006-01-02T15:04:05Z", pr.UpdatedAt)
-				age := now.Sub(createdAt)
-				idle := now.Sub(updatedAt)
-
-				if pr.IsDraft && age.Hours() > 7*24 {
-					alerts = append(alerts, fmt.Sprintf("PR #%d: draft for %d days", pr.Number, int(age.Hours()/24)))
-				} else if !pr.IsDraft && idle.Hours() > 7*24 {
-					alerts = append(alerts, fmt.Sprintf("PR #%d: idle for %d days", pr.Number, int(idle.Hours()/24)))
-				}
-
-				if !containsCloseRef(pr.Body, branchPattern, pr.HeadRefName) {
-					alerts = append(alerts, fmt.Sprintf("PR #%d: missing Closes #N", pr.Number))
-				}
-
-				readiness, err := s.gh.AssessMergeReadiness(ctx, repo, pr.Number)
-				if err == nil {
-					for _, check := range readiness.Checks {
-						if check.Conclusion == "failure" || check.Conclusion == "error" {
-							alerts = append(alerts, fmt.Sprintf("PR #%d: failing CI", pr.Number))
-							break
-						}
-					}
-					if readiness.MergeState == "dirty" {
-						alerts = append(alerts, fmt.Sprintf("PR #%d: merge conflicts", pr.Number))
-					}
+			for _, check := range readiness.Checks {
+				if check.Conclusion == "failure" || check.Conclusion == "error" {
+					alerts = append(alerts, fmt.Sprintf("CI: %s is failing", check.Name))
 				}
 			}
+			if readiness.MergeState == "dirty" {
+				alerts = append(alerts, "merge conflicts")
+			}
+			if readiness.MergeState == "behind" {
+				alerts = append(alerts, "branch is behind base — needs update")
+			}
 			if len(alerts) > 0 {
-				b.Section("Attention Needed")
+				b.Section("Attention")
 				for _, a := range alerts {
 					b.Warn("%s", a)
 				}
 			}
 		}
+	} else {
+		b.Info("No PR yet — use `commit` to push and auto-create a draft PR")
+	}
 
+	// Recent loom comments (working memory)
+	if err == nil {
+		comments, cErr := s.gh.GetIssueComments(ctx, repo, issueNum)
+		if cErr == nil {
+			var loomComments []gh.IssueComment
+			for _, c := range comments {
+				if strings.Contains(c.Body, loomCommentMarker) {
+					loomComments = append(loomComments, c)
+				}
+			}
+			if len(loomComments) > 0 {
+				show := loomComments
+				if len(show) > 3 {
+					show = show[len(show)-3:]
+				}
+				b.Section(fmt.Sprintf("Recent Notes (%d total)", len(loomComments)))
+				for _, c := range show {
+					body := strings.ReplaceAll(c.Body, loomCommentMarker, "")
+					body = strings.TrimSpace(body)
+					b.Text(fmt.Sprintf("\n@%s (%s):\n%s", c.Author, c.CreatedAt, output.CleanBody(body)))
+				}
+			}
+		}
+	}
+
+	// Blockers from dependencies
+	deps, depsErr := s.gh.GetDependencies(ctx, repo, issueNum)
+	if depsErr == nil {
+		var openBlockers []gh.Dependency
+		for _, d := range deps.BlockedBy {
+			if !strings.EqualFold(d.State, "CLOSED") && !strings.EqualFold(d.State, "closed") {
+				openBlockers = append(openBlockers, d)
+			}
+		}
+		if len(openBlockers) > 0 {
+			b.Section(fmt.Sprintf("Blockers (%d)", len(openBlockers)))
+			for _, d := range openBlockers {
+				b.Warn("#%d %s", d.Number, d.Title)
+			}
+		}
 	}
 
 	return builderResult(b), nil, nil
