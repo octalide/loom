@@ -571,14 +571,28 @@ func (s *Server) handleSetup(ctx context.Context, req *mcp.CallToolRequest, in s
 	// Ensure base branch exists
 	if !s.git.RemoteBranchExists(dc.Cwd, cfg.Branches.Base) {
 		b.Info("Creating %s branch from %s...", cfg.Branches.Base, cfg.Branches.Release)
-		_ = s.git.Checkout(dc.Cwd, cfg.Branches.Release)
-		_ = s.git.CreateBranch(dc.Cwd, cfg.Branches.Base, cfg.Branches.Release)
-		_ = s.git.Push(dc.Cwd, cfg.Branches.Base)
+		createFailed := false
+		if err := s.git.Checkout(dc.Cwd, cfg.Branches.Release); err != nil {
+			b.Warn("Failed to checkout %s: %v", cfg.Branches.Release, err)
+			createFailed = true
+		} else if err := s.git.CreateBranch(dc.Cwd, cfg.Branches.Base, cfg.Branches.Release); err != nil {
+			b.Warn("Failed to create branch %s: %v", cfg.Branches.Base, err)
+			createFailed = true
+		} else if err := s.git.Push(dc.Cwd, cfg.Branches.Base); err != nil {
+			b.Warn("Failed to push %s: %v", cfg.Branches.Base, err)
+			createFailed = true
+		}
 		if dc.BranchName != "" && dc.BranchName != cfg.Branches.Release && dc.BranchName != cfg.Branches.Base {
 			_ = s.git.Checkout(dc.Cwd, dc.BranchName)
 		}
+		if createFailed {
+			b.Warn("Branch %s could not be created — check permissions and retry", cfg.Branches.Base)
+		} else {
+			b.OK("Branch: created %s from %s", cfg.Branches.Base, cfg.Branches.Release)
+		}
+	} else {
+		b.OK("Branch: %s exists", cfg.Branches.Base)
 	}
-	b.OK("Branch: %s exists", cfg.Branches.Base)
 
 	// Branch protection
 	for _, branch := range []string{cfg.Branches.Base, cfg.Branches.Release} {
