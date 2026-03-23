@@ -115,16 +115,23 @@ func (c *Client) ListOpenPRs(ctx context.Context, repo string) ([]*PullRequest, 
 	if err != nil {
 		return nil, err
 	}
-	prs, _, err := c.REST.PullRequests.List(ctx, owner, name, &gh.PullRequestListOptions{
-		State:       "open",
-		ListOptions: gh.ListOptions{PerPage: 50},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list open PRs: %w", err)
-	}
 	var result []*PullRequest
-	for _, pr := range prs {
-		result = append(result, prFromREST(pr))
+	opts := &gh.PullRequestListOptions{
+		State:       "open",
+		ListOptions: gh.ListOptions{PerPage: 100},
+	}
+	for {
+		prs, resp, err := c.REST.PullRequests.List(ctx, owner, name, opts)
+		if err != nil {
+			return nil, fmt.Errorf("list open PRs: %w", err)
+		}
+		for _, pr := range prs {
+			result = append(result, prFromREST(pr))
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
 	return result, nil
 }
@@ -277,18 +284,25 @@ func (c *Client) GetPRReviews(ctx context.Context, repo string, number int) ([]R
 	if err != nil {
 		return nil, err
 	}
-	reviews, _, err := c.REST.PullRequests.ListReviews(ctx, owner, name, number, &gh.ListOptions{PerPage: 100})
-	if err != nil {
-		return nil, fmt.Errorf("list reviews for PR #%d: %w", number, err)
-	}
 	var result []Review
-	for _, r := range reviews {
-		result = append(result, Review{
-			Author:      r.GetUser().GetLogin(),
-			State:       r.GetState(),
-			Body:        r.GetBody(),
-			SubmittedAt: r.GetSubmittedAt().Format("2006-01-02T15:04:05Z"),
-		})
+	opts := &gh.ListOptions{PerPage: 100}
+	for {
+		reviews, resp, err := c.REST.PullRequests.ListReviews(ctx, owner, name, number, opts)
+		if err != nil {
+			return nil, fmt.Errorf("list reviews for PR #%d: %w", number, err)
+		}
+		for _, r := range reviews {
+			result = append(result, Review{
+				Author:      r.GetUser().GetLogin(),
+				State:       r.GetState(),
+				Body:        r.GetBody(),
+				SubmittedAt: r.GetSubmittedAt().Format("2006-01-02T15:04:05Z"),
+			})
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
 	return result, nil
 }
@@ -298,23 +312,30 @@ func (c *Client) GetPRReviewComments(ctx context.Context, repo string, number in
 	if err != nil {
 		return nil, err
 	}
-	comments, _, err := c.REST.PullRequests.ListComments(ctx, owner, name, number, &gh.PullRequestListCommentsOptions{
-		ListOptions: gh.ListOptions{PerPage: 100},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list review comments for PR #%d: %w", number, err)
-	}
 	byFile := make(map[string][]ReviewComment)
-	for _, c := range comments {
-		path := c.GetPath()
-		byFile[path] = append(byFile[path], ReviewComment{
-			Author:    c.GetUser().GetLogin(),
-			Body:      c.GetBody(),
-			Path:      path,
-			Line:      c.GetLine(),
-			CreatedAt: c.GetCreatedAt().Format("2006-01-02T15:04:05Z"),
-			InReplyTo: c.GetInReplyTo(),
-		})
+	opts := &gh.PullRequestListCommentsOptions{
+		ListOptions: gh.ListOptions{PerPage: 100},
+	}
+	for {
+		comments, resp, err := c.REST.PullRequests.ListComments(ctx, owner, name, number, opts)
+		if err != nil {
+			return nil, fmt.Errorf("list review comments for PR #%d: %w", number, err)
+		}
+		for _, c := range comments {
+			path := c.GetPath()
+			byFile[path] = append(byFile[path], ReviewComment{
+				Author:    c.GetUser().GetLogin(),
+				Body:      c.GetBody(),
+				Path:      path,
+				Line:      c.GetLine(),
+				CreatedAt: c.GetCreatedAt().Format("2006-01-02T15:04:05Z"),
+				InReplyTo: c.GetInReplyTo(),
+			})
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
 	return byFile, nil
 }
