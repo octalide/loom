@@ -117,7 +117,7 @@ func (s *Server) handleStart(ctx context.Context, req *mcp.CallToolRequest, in s
 		branchType = "feat"
 	}
 	if !cfg.ValidBranchType(branchType) {
-		return errorResult("invalid branch_type %q; allowed: %s", branchType, strings.Join(cfg.Branches.Types, ", ")), nil, nil
+		return errorResult("invalid branch_type %q; allowed: %s. Call `usage` for conventions", branchType, strings.Join(cfg.Branches.Types, ", ")), nil, nil
 	}
 
 	if !in.Worktree && s.git.HasUncommittedChanges(dc.Cwd) {
@@ -234,7 +234,7 @@ func (s *Server) handleCommit(ctx context.Context, req *mcp.CallToolRequest, in 
 		return errorResult("could not determine current branch"), nil, nil
 	}
 	if branch == cfg.Branches.Base || branch == cfg.Branches.Release {
-		return errorResult("refusing to commit directly on '%s' — use a feature branch", branch), nil, nil
+		return errorResult("refusing to commit directly on '%s' — use `start(issue)` to create a feature branch. Call `usage` for workflow details", branch), nil, nil
 	}
 
 	push := true
