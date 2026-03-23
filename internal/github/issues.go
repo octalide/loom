@@ -155,6 +155,20 @@ func (c *Client) CloseIssue(ctx context.Context, repo string, number int) error 
 	return nil
 }
 
+func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int, body string) (string, error) {
+	owner, name, err := SplitRepo(repo)
+	if err != nil {
+		return "", err
+	}
+	comment, _, err := c.REST.Issues.CreateComment(ctx, owner, name, number, &gh.IssueComment{
+		Body: gh.Ptr(body),
+	})
+	if err != nil {
+		return "", fmt.Errorf("create comment on #%d: %w", number, err)
+	}
+	return comment.GetHTMLURL(), nil
+}
+
 func (c *Client) GetIssueURL(ctx context.Context, repo string, number int) (string, error) {
 	owner, name, err := SplitRepo(repo)
 	if err != nil {

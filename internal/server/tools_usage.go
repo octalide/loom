@@ -59,6 +59,7 @@ func (s *Server) handleUsage(ctx context.Context, req *mcp.CallToolRequest, in u
 	b.Bullet("`create_issue(title, body, labels?)` — create issue with optional labels")
 	b.Bullet("`start(issue)` — branch + push")
 	b.Bullet("`commit(message)` — stage + commit + push + auto-draft-PR")
+	b.Bullet("`comment(body, issue?)` — post a comment on an issue (progress, decisions, notes). Auto-detects issue from branch")
 	b.Bullet("`finish()` — ready PR + merge/auto-merge + cleanup")
 	b.Bullet("`wait(pr, timeout?)` — wait for a PR to merge. Polls every 3s, default 90s timeout. Blocks for the full duration of CI — only use when subsequent work depends on the merge result. If work can be done in parallel, skip wait")
 	b.Text("")
