@@ -268,15 +268,20 @@ func (s *Server) handleAudit(ctx context.Context, req *mcp.CallToolRequest, in a
 		if _, err := s.gh.FindPRForBranch(ctx, repo, branch); err != nil {
 			b.Warn("No PR found for branch '%s'", branch)
 			if in.Fix {
-				m := regexp.MustCompile(`/(\d+)$`).FindStringSubmatch(branch)
+				m := regexp.MustCompile(`^(\w+)/(\d+)$`).FindStringSubmatch(branch)
 				issueNum := 0
+				branchType := ""
 				if m != nil {
-					fmt.Sscanf(m[1], "%d", &issueNum)
+					branchType = m[1]
+					fmt.Sscanf(m[2], "%d", &issueNum)
 				}
-				prBody := ""
+				issueTitle := ""
 				if issueNum > 0 {
-					prBody = fmt.Sprintf("Closes #%d", issueNum)
+					if issue, err := s.gh.GetIssue(ctx, repo, issueNum); err == nil {
+						issueTitle = issue.Title
+					}
 				}
+				prBody := cfg.RenderPRBody(issueNum, issueTitle, branch, branchType)
 				prTitle := strings.Replace(branch, "/", ": ", 1)
 				if len(prTitle) > 70 {
 					prTitle = prTitle[:67] + "..."

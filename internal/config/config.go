@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ type Config struct {
 	Strict      *bool          `yaml:"strict,omitempty"`
 	Branches    BranchesConfig `yaml:"branches"`
 	Checks      []string       `yaml:"checks"`
+	PRTemplate  string         `yaml:"pr_template"`
 }
 
 type BranchesConfig struct {
@@ -78,6 +80,9 @@ func merge(dst, src *Config) {
 	if len(src.Checks) > 0 {
 		dst.Checks = src.Checks
 	}
+	if src.PRTemplate != "" {
+		dst.PRTemplate = src.PRTemplate
+	}
 }
 
 func normalizeMergeMethod(m string) string {
@@ -108,4 +113,18 @@ func (c *Config) ValidBranchType(t string) bool {
 		}
 	}
 	return false
+}
+
+// RenderPRBody renders the PR body for an issue. If PRTemplate is set,
+// substitutes variables; otherwise returns the default "Closes #N".
+func (c *Config) RenderPRBody(issueNumber int, issueTitle, branch, branchType string) string {
+	if c.PRTemplate == "" {
+		return fmt.Sprintf("Closes #%d", issueNumber)
+	}
+	body := c.PRTemplate
+	body = strings.ReplaceAll(body, "{{issue}}", fmt.Sprintf("%d", issueNumber))
+	body = strings.ReplaceAll(body, "{{title}}", issueTitle)
+	body = strings.ReplaceAll(body, "{{branch}}", branch)
+	body = strings.ReplaceAll(body, "{{branch_type}}", branchType)
+	return body
 }

@@ -500,7 +500,8 @@ func (s *Server) ensureDraftPR(ctx context.Context, dc *detect.Context, branch s
 		prTitle = prTitle[:67] + "..."
 	}
 
-	_, prURL, err := s.gh.CreateDraftPR(ctx, dc.Repo, prTitle, fmt.Sprintf("Closes #%d", issueNumber), dc.Config.Branches.Base, branch)
+	prBody := dc.Config.RenderPRBody(issueNumber, title, branch, branchType)
+	_, prURL, err := s.gh.CreateDraftPR(ctx, dc.Repo, prTitle, prBody, dc.Config.Branches.Base, branch)
 	if err != nil {
 		b.Warn("failed to create draft PR: %v", err)
 		return
